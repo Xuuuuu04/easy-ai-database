@@ -18,3 +18,7 @@ cp .env.example .env && ./scripts/run.sh
 ## Development Status
 - This repository is maintained for open-source collaboration.
 - Progress is tracked via commits and issues.
+
+## Migration Note
+- Core folders were moved under `src/`.
+- Root-level legacy paths are kept as compatibility symlinks.
