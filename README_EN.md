@@ -7,7 +7,7 @@ Local offline knowledge-base assistant with document ingestion and RAG QA.
 - English: [README_EN](./README_EN.md)
 
 ## Project Structure
-Backend: backend/; Frontend: frontend/; Data: data/
+Backend: src/backend/; Frontend: src/frontend/; Data: data/
 
 ## Quick Start
 cp .env.example .env && ./scripts/run.sh

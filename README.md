@@ -38,8 +38,8 @@ cp .env.example .env
 
 ## 项目结构
 ```
-backend/   FastAPI 服务
-frontend/  React UI
+src/backend/   FastAPI 服务
+src/frontend/  React UI
 docs/      架构与文档
 data/      本地数据
 scripts/   脚本

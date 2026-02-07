@@ -11,10 +11,10 @@ source "$ROOT_DIR/.venv/bin/activate"
 
 # 安装后端依赖
 pip install --upgrade pip
-pip install -r "$ROOT_DIR/backend/requirements.txt"
+pip install -r "$ROOT_DIR/src/backend/requirements.txt"
 
 # 安装前端依赖
-cd "$ROOT_DIR/frontend"
+cd "$ROOT_DIR/src/frontend"
 if [ -f package-lock.json ]; then
   npm ci
 else
@@ -27,11 +27,11 @@ cd "$ROOT_DIR"
 export $(grep -v '^#' .env | xargs) || true
 
 # 启动后端
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 &
+uvicorn src.backend.app.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 # 启动前端
-cd "$ROOT_DIR/frontend"
+cd "$ROOT_DIR/src/frontend"
 VITE_API_BASE=${VITE_API_BASE:-http://localhost:8000} npm run dev -- --host 0.0.0.0
 
 # 退出时关闭后端
