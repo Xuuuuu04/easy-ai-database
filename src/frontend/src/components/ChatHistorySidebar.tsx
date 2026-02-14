@@ -9,6 +9,7 @@ interface Chat {
 
 interface ChatHistorySidebarProps {
   isOpen: boolean;
+  kbId: number;
   onClose: () => void;
   onSelect: (chatId: number) => void;
   currentChatId?: number | null;
@@ -16,6 +17,7 @@ interface ChatHistorySidebarProps {
 
 export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
   isOpen,
+  kbId,
   onClose,
   onSelect,
   currentChatId,
@@ -28,13 +30,13 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     if (isOpen) {
       fetchHistory();
     }
-  }, [isOpen]);
+  }, [isOpen, kbId]);
 
   const fetchHistory = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/chat/history`);
+      const response = await fetch(`${API_BASE}/chat/history?kb_id=${kbId}`);
       if (!response.ok) {
         throw new Error('Failed to fetch chat history');
       }
@@ -62,132 +64,84 @@ export const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        height: '100%',
-        width: '300px',
-        backgroundColor: '#f9fafb',
-        boxShadow: '2px 0 5px rgba(0,0,0,0.1)',
-        transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
-        transition: 'transform 0.3s ease-in-out',
-        zIndex: 1000,
-        display: 'flex',
-        flexDirection: 'column',
-        borderRight: '1px solid #e5e7eb',
-      }}
-    >
-      <div
-        style={{
-          padding: '16px',
-          borderBottom: '1px solid #e5e7eb',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: '#ffffff',
-        }}
+    <>
+      <div 
+        className={`history-overlay ${isOpen ? 'visible' : ''}`} 
+        onClick={onClose}
+        aria-hidden={!isOpen}
+      />
+      
+      <aside 
+        className={`history-sidebar ${isOpen ? 'open' : ''}`}
+        aria-label="Chat History"
       >
-        <h2 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#111827' }}>
-          历史会话
-        </h2>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '1.25rem',
-            color: '#6b7280',
-            padding: '4px',
-            borderRadius: '4px',
-          }}
-          aria-label="Close sidebar"
-        >
-          ✕
-        </button>
-      </div>
+        <div className="history-sidebar-header">
+          <h3>历史会话</h3>
+          <button
+            onClick={onClose}
+            className="history-close-btn"
+            aria-label="Close sidebar"
+          >
+            ✕
+          </button>
+        </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#6b7280' }}>
-            加载中...
-          </div>
-        ) : error ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#ef4444' }}>
-            {error}
-            <button
-              onClick={fetchHistory}
-              style={{
-                display: 'block',
-                margin: '10px auto',
-                padding: '4px 8px',
-                fontSize: '0.875rem',
-                color: '#2563eb',
-                background: 'none',
-                border: '1px solid #2563eb',
-                borderRadius: '4px',
-                cursor: 'pointer',
-              }}
-            >
-              重试
-            </button>
-          </div>
-        ) : history.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#9ca3af' }}>
-            暂无历史会话
-          </div>
-        ) : (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {history.map((chat) => (
-              <li key={chat.id} style={{ marginBottom: '8px' }}>
-                <div
+        <div className="history-list">
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--bg-ink-muted)' }}>
+              加载中...
+            </div>
+          ) : error ? (
+            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--danger)' }}>
+              {error}
+              <button
+                onClick={fetchHistory}
+                style={{
+                  display: 'block',
+                  margin: '10px auto',
+                  padding: '4px 8px',
+                  fontSize: '0.875rem',
+                  color: 'var(--accent)',
+                  background: 'none',
+                  border: '1px solid var(--accent)',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                重试
+              </button>
+            </div>
+          ) : history.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px', color: 'var(--bg-ink-muted)' }}>
+              暂无历史会话
+            </div>
+          ) : (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {history.map((chat) => (
+                <li 
+                  key={chat.id} 
+                  className={`history-item ${currentChatId === chat.id ? 'active' : ''}`}
                   onClick={() => onSelect(chat.id)}
-                  style={{
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '12px',
-                    backgroundColor: currentChatId === chat.id ? '#e0e7ff' : '#ffffff',
-                    border: '1px solid',
-                    borderColor: currentChatId === chat.id ? '#c7d2fe' : '#e5e7eb',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (currentChatId !== chat.id) {
-                      e.currentTarget.style.backgroundColor = '#f3f4f6';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (currentChatId !== chat.id) {
-                      e.currentTarget.style.backgroundColor = '#ffffff';
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      onSelect(chat.id);
                     }
                   }}
                 >
-                  <div
-                    style={{
-                      fontWeight: 500,
-                      color: '#1f2937',
-                      marginBottom: '4px',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
+                  <div className="history-item-title">
                     {chat.title || '无标题会话'}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                  <div className="history-item-time">
                     {formatDate(chat.created_at)}
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </aside>
+    </>
   );
 };

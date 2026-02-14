@@ -13,7 +13,7 @@ interface HeaderProps {
  */
 export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
   return (
-    <header className="app-header">
+    <aside className="app-sidebar" aria-label="Primary navigation">
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
           <span className="mark-core" />
@@ -25,34 +25,39 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
         </div>
       </div>
 
-      <div className="header-meta">
+      <div className="sidebar-meta">
         <span className="meta-pill">离线优先</span>
         <span className="meta-pill muted">数据仅本地</span>
       </div>
 
-      <nav className="main-nav" aria-label="Primary">
+      <nav className="side-nav" aria-label="Primary">
         <button
           type="button"
-          className={`nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
+          className={`side-nav-btn ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => onTabChange('chat')}
         >
-          对话
+          <span aria-hidden="true">💬</span>
+          <span>对话</span>
         </button>
         <button
           type="button"
-          className={`nav-btn ${activeTab === 'kb' ? 'active' : ''}`}
+          className={`side-nav-btn ${activeTab === 'kb' ? 'active' : ''}`}
           onClick={() => onTabChange('kb')}
         >
-          知识库
+          <span aria-hidden="true">📚</span>
+          <span>知识库</span>
         </button>
         <button
           type="button"
-          className={`nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
+          className={`side-nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
           onClick={() => onTabChange('settings')}
         >
-          设置
+          <span aria-hidden="true">⚙️</span>
+          <span>设置</span>
         </button>
       </nav>
-    </header>
+
+      <p className="sidebar-footnote">Workspace Ready</p>
+    </aside>
   )
 }

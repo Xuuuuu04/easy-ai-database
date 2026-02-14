@@ -1,0 +1,19 @@
+{
+  "k": 2,
+  "parameter_grid": {
+    "candidate_top_k": [1, 2],
+    "use_reranker": [false]
+  },
+  "cases": [
+    {
+      "id": "capital-france",
+      "query": "capital",
+      "relevant_snippets": ["Paris"]
+    },
+    {
+      "id": "language-python",
+      "query": "language",
+      "relevant_snippets": ["Python"]
+    }
+  ]
+}

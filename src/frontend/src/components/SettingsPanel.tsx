@@ -9,9 +9,12 @@ export const SettingsPanel: React.FC = () => {
   const [health, setHealth] = useState<{ status: string; mock_mode: boolean } | null>(null)
   const [docCount, setDocCount] = useState(0)
   const [chatCount, setChatCount] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastCheckedAt, setLastCheckedAt] = useState<string>('')
 
-  useEffect(() => {
-    Promise.all([
+  const refreshOverview = async () => {
+    setRefreshing(true)
+    const [h, docs, chats] = await Promise.all([
       fetch(`${API_BASE}/health`)
         .then((r) => r.json())
         .catch(() => null),
@@ -21,11 +24,17 @@ export const SettingsPanel: React.FC = () => {
       fetch(`${API_BASE}/chat/history`)
         .then((r) => r.json())
         .catch(() => []),
-    ]).then(([h, docs, chats]) => {
-      setHealth(h)
-      setDocCount(docs ? docs.length : 0)
-      setChatCount(chats ? chats.length : 0)
-    })
+    ])
+
+    setHealth(h)
+    setDocCount(docs ? docs.length : 0)
+    setChatCount(chats ? chats.length : 0)
+    setLastCheckedAt(new Date().toLocaleTimeString())
+    setRefreshing(false)
+  }
+
+  useEffect(() => {
+    void refreshOverview()
   }, [])
 
   return (
@@ -62,11 +71,17 @@ export const SettingsPanel: React.FC = () => {
         </section>
 
         <section className="setting-card">
-          <h3>系统状态</h3>
+          <div className="setting-headline">
+            <h3>系统状态</h3>
+            <button type="button" className="refresh-btn" onClick={() => void refreshOverview()} disabled={refreshing}>
+              {refreshing ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+          {lastCheckedAt && <p className="hint">上次检查：{lastCheckedAt}</p>}
           <div className="about-grid">
             <div>
               <span className="about-label">后端连接</span>
-              <div className="status-indicator" style={{ marginTop: '4px' }}>
+              <div className="status-indicator status-with-gap">
                 <div className={`status-dot ${health ? 'online' : 'offline'}`} />
                 <span className="about-value">{health ? '在线' : '离线'}</span>
               </div>

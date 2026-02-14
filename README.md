@@ -7,6 +7,8 @@
 - URL 导入：单页抓取
 - RAG 问答：引用溯源
 - Agent 模式：多步检索/总结 + 步骤记录
+- 检索评测：支持评测集生成、参数自动调优、LLM-as-Judge
+- MCP 调用：安装 `fastapi-mcp` 后可通过 `/mcp` 被外部 AI 工具调用
 - 全程离线存储：`./data`
 
 ## 快速开始
@@ -33,6 +35,9 @@ cp .env.example .env
 - `DELETE /kb/documents/{id}` 删除文档
 - `POST /chat/rag` RAG 问答
 - `POST /chat/agent` Agent 模式
+- `POST /retrieve` 纯检索接口（适合外部工具）
+- `POST /eval/retrieval` 检索评测与调优
+- `POST /eval/retrieval/generate-dataset` 评测集生成
 - `GET /chat/history` 历史
 - `GET /chat/{id}` 对话详情
 

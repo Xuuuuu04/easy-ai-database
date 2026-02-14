@@ -5,4 +5,6 @@ __pycache__/
 .env
 data/
 frontend/dist/
+src/frontend/dist/
+output/
 *.log
