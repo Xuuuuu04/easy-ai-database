@@ -1,24 +1,44 @@
-# IMA Simple
+# easy-ai-database
 
-Local offline knowledge-base assistant with document ingestion and RAG QA.
+A lightweight local AI RAG knowledge base with document/web ingestion, grounded QA, multi-step agent retrieval, and MCP integration.
 
-## Language
-- Chinese: [README](./README.md)
-- English: [README_EN](./README_EN.md)
-
-## Project Structure
-Backend: src/backend/; Frontend: src/frontend/; Data: data/
+## Features
+- Local-first storage: SQLite + FAISS in `./data`
+- Ingestion: PDF / DOCX / TXT and URL import
+- Retrieval APIs: `/chat/rag`, `/chat/agent`, `/retrieve`
+- MCP endpoint: `/mcp/v1` for external AI clients
+- Settings UI: edit root `.env`, toggle MCP tools, and generate install commands
 
 ## Quick Start
-cp .env.example .env && ./scripts/run.sh
 
-## Source Directory
-- Unified source entry: [src](./src)
+### Docker
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
-## Development Status
-- This repository is maintained for open-source collaboration.
-- Progress is tracked via commits and issues.
+### Local script
+```bash
+cp .env.example .env
+./scripts/run.sh
+```
 
-## Migration Note
-- Core folders were moved under `src/`.
-- Root-level legacy paths are kept as compatibility symlinks.
+Default frontend: `http://localhost:5173`  
+Default backend: `http://localhost:8000`
+
+## Development Commands
+```bash
+python3 -m pytest -q
+cd src/frontend && npm run test
+cd src/frontend && npm run build
+```
+
+## Project Layout
+- `src/backend/`: FastAPI backend
+- `src/frontend/`: React frontend
+- `data/`: local database/index data
+- `docs/`: architecture and operations docs
+- `scripts/`: developer scripts
+
+## MCP Installation
+Set `DEPLOYMENT_URL` in the web settings panel and save. The UI will generate ready-to-run MCP install commands for Claude Code and CodeX.

@@ -5,6 +5,7 @@ from typing import Generator
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from ..config import settings
 from ..state import mcp_authorized, mcp_protocol_server, mcp_response_headers
 
 router = APIRouter()
@@ -12,6 +13,13 @@ router = APIRouter()
 
 @router.get("/mcp/v1")
 def mcp_stream(request: Request) -> Response:
+    if not settings.mcp_tools_enabled:
+        return JSONResponse(
+            {"detail": "MCP tools are disabled by server settings"},
+            status_code=503,
+            headers=mcp_response_headers(),
+        )
+
     if not mcp_authorized(request):
         return Response(status_code=401, headers=mcp_response_headers())
 
@@ -31,6 +39,13 @@ def mcp_stream(request: Request) -> Response:
 
 @router.post("/mcp/v1")
 async def mcp_http(request: Request) -> Response:
+    if not settings.mcp_tools_enabled:
+        return JSONResponse(
+            {"detail": "MCP tools are disabled by server settings"},
+            status_code=503,
+            headers=mcp_response_headers(),
+        )
+
     if not mcp_authorized(request):
         return Response(status_code=401, headers=mcp_response_headers())
 

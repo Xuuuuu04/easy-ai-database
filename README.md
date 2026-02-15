@@ -1,83 +1,48 @@
-# 本机知识库 AI 助手
+# easy-ai-database
 
-单用户、本地离线的知识库 AI 助手，支持文档/网页导入、RAG 问答、Agent 多步检索与总结（带引用溯源与历史）。
+轻量级本地 AI RAG 知识库系统，支持文档/网页导入、RAG 问答、Agent 多步检索、MCP 工具调用。
 
-## 功能
-- 本地文档导入：PDF/DOCX/TXT
-- URL 导入：单页抓取
-- RAG 问答：引用溯源
-- Agent 模式：多步检索/总结 + 步骤记录
-- 检索评测：支持评测集生成、参数自动调优、LLM-as-Judge
-- MCP 调用：安装 `fastapi-mcp` 后可通过 `/mcp` 被外部 AI 工具调用
-- 全程离线存储：`./data`
+## 核心特性
+- 本地数据存储：SQLite + FAISS，默认 `./data`
+- 文档导入：PDF / DOCX / TXT + URL 抓取
+- 检索问答：`/chat/rag`、`/chat/agent`、`/retrieve`
+- MCP 协议：`/mcp/v1`，支持外部 AI 工具调用
+- 设置面板：前端直接编辑根目录 `.env`，支持 MCP 开关、部署地址、命令生成
 
 ## 快速开始
 
-### 方式一：Docker Compose
+### Docker
 ```bash
 cp .env.example .env
-# 修改 .env 中的模型端点
-
 docker compose up --build
 ```
-前端：`http://localhost:5173`，后端：`http://localhost:8000`
 
-### 方式二：本地脚本
+### 本地脚本
 ```bash
 cp .env.example .env
 ./scripts/run.sh
 ```
 
-## 后端 API（摘要）
-- `POST /ingest/file` 上传文件
-- `POST /ingest/url` 导入 URL
-- `GET /kb/documents` 文档列表
-- `DELETE /kb/documents/{id}` 删除文档
-- `POST /chat/rag` RAG 问答
-- `POST /chat/agent` Agent 模式
-- `POST /retrieve` 纯检索接口（适合外部工具）
-- `POST /eval/retrieval` 检索评测与调优
-- `POST /eval/retrieval/generate-dataset` 评测集生成
-- `GET /chat/history` 历史
-- `GET /chat/{id}` 对话详情
+前端默认：`http://localhost:5173`  
+后端默认：`http://localhost:8000`
 
-## 项目结构
-```
-src/backend/   FastAPI 服务
-src/frontend/  React UI
-docs/      架构与文档
-data/      本地数据
-scripts/   脚本
-```
-
-## 模型说明
-- 使用 OpenAI 兼容 API 的本地端点（如 LM Studio）
-- 在 `.env` 中配置 `LLM_*` 与 `EMBED_*`
-
-## 测试
+## 常用命令
 ```bash
-cd backend
-MOCK_MODE=1 pytest
+python3 -m pytest -q
+cd src/frontend && npm run test
+cd src/frontend && npm run build
 ```
-
-## 运行与排错
-详见 `docs/runbook.md`。
-
-
-## 开发进度（截至 2026-02-07）
-- 已完成可公开仓库基线整理：补齐许可证、清理敏感与内部说明文件。
-- 当前版本可构建/可运行，后续迭代以 issue 与提交记录持续公开追踪。
-
-## Language
-- 中文：[`README.md`](./README.md)
-- English：[`README_EN.md`](./README_EN.md)
-
-## 统一源码目录
-- 源码入口：[`src/`](./src)
 
 ## 目录结构
-- 结构说明：[`docs/PROJECT_STRUCTURE.md`](./docs/PROJECT_STRUCTURE.md)
+- `src/backend/`: FastAPI 后端
+- `src/frontend/`: React 前端
+- `data/`: 本地数据库与索引
+- `docs/`: 架构与运维文档
+- `scripts/`: 开发脚本
 
-## 迁移说明
-- 核心目录已迁移到 `src/` 下。
-- 根目录保留兼容软链接，历史命令与路径可继续使用。
+## MCP 安装
+在 Web 设置面板中填写 `DEPLOYMENT_URL` 并保存后，会自动生成 Claude Code / CodeX 的 MCP 安装命令。
+
+## Language
+- 中文: [`README.md`](./README.md)
+- English: [`README_EN.md`](./README_EN.md)

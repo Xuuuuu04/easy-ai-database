@@ -124,13 +124,13 @@
 ```json
 {
   "mcpServers": {
-    "ima-simple": {
+    "easy-ai-database": {
       "command": "python",
-      "args": ["/Users/xushaoyang/Desktop/ima-simple/scripts/mcp_stdio.py"],
+      "args": ["./scripts/mcp_stdio.py"],
       "env": {
-        "DATA_DIR": "/Users/xushaoyang/Desktop/ima-simple/data",
-        "DB_PATH": "/Users/xushaoyang/Desktop/ima-simple/data/app.db",
-        "INDEX_DIR": "/Users/xushaoyang/Desktop/ima-simple/data/index",
+        "DATA_DIR": "./data",
+        "DB_PATH": "./data/app.db",
+        "INDEX_DIR": "./data/index",
         "MCP_PROTOCOL_VERSION": "2025-11-25"
       }
     }

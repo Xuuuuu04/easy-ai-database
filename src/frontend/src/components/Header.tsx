@@ -20,8 +20,8 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
           <span className="mark-ring" />
         </div>
         <div className="brand-text">
-          <p className="brand-kicker">Local Knowledge Studio</p>
-          <h1>本机知识库助手</h1>
+          <p className="brand-kicker">easy-ai-database</p>
+          <h1>轻量 AIRAG 知识库</h1>
         </div>
       </div>
 

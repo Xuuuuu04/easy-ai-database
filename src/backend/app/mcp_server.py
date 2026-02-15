@@ -115,7 +115,8 @@ class KnowledgeBaseMCPServer:
 
     def server_name(self) -> str:
         return str(
-            getattr(settings, "mcp_server_name", "ima-simple-mcp") or "ima-simple-mcp"
+            getattr(settings, "mcp_server_name", "easy-ai-database-mcp")
+            or "easy-ai-database-mcp"
         )
 
     def handle_message(self, payload: Any) -> JsonObj | None:
@@ -200,6 +201,9 @@ class KnowledgeBaseMCPServer:
         }
 
     def _handle_tools_list(self, params: JsonObj) -> JsonObj:
+        if not settings.mcp_tools_enabled:
+            return {"tools": []}
+
         tools = [
             {
                 "name": "kb.list",
@@ -406,6 +410,9 @@ class KnowledgeBaseMCPServer:
         return result
 
     def _handle_tools_call(self, params: JsonObj) -> JsonObj:
+        if not settings.mcp_tools_enabled:
+            raise MCPProtocolError(-32603, "MCP tools are disabled by server settings")
+
         name = _to_text(params.get("name"), "name")
         arguments = _to_obj(params.get("arguments"), "arguments")
 

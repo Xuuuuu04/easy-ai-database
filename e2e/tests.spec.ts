@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('End-to-End Tests', () => {
   test('T7: Basic Page Load Test', async ({ page }) => {
     await page.goto('http://localhost:5173');
-    await expect(page).toHaveTitle(/本机知识库助手/i);
+    await expect(page).toHaveTitle(/easy-ai-database/i);
     
     // Verify tabs
     await expect(page.getByRole('button', { name: '对话' })).toBeVisible();

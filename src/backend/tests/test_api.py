@@ -152,7 +152,7 @@ def test_rag_smalltalk_greeting_returns_conversational_reply():
 
         assert resp.status_code == 200
         data = resp.json()
-        assert "你好！我是本机知识库助手" in data["answer"]
+        assert "你好！我是 easy-ai-database 助手" in data["answer"]
         assert data["citations"] == []
         assert "没有足够的依据" not in data["answer"]
 
@@ -172,7 +172,7 @@ def test_rag_smalltalk_greeting_stream_returns_conversational_reply():
         done_events = [item for item in payloads if item.get("done")]
         assert done_events
         done = done_events[-1]
-        assert "你好！我是本机知识库助手" in done.get("answer", "")
+        assert "你好！我是 easy-ai-database 助手" in done.get("answer", "")
         assert done.get("citations") == []
 
 
@@ -184,7 +184,7 @@ def test_agent_smalltalk_greeting_returns_conversational_reply():
 
         assert resp.status_code == 200
         data = resp.json()
-        assert "你好！我是本机知识库助手" in data["answer"]
+        assert "你好！我是 easy-ai-database 助手" in data["answer"]
         assert data["citations"] == []
         assert "没有足够的依据" not in data["answer"]
 
@@ -204,7 +204,7 @@ def test_agent_smalltalk_greeting_stream_returns_conversational_reply():
         done_events = [item for item in payloads if item.get("done")]
         assert done_events
         done = done_events[-1]
-        assert "你好！我是本机知识库助手" in done.get("answer", "")
+        assert "你好！我是 easy-ai-database 助手" in done.get("answer", "")
         assert done.get("citations") == []
 
 

@@ -17,7 +17,7 @@ except Exception:
 
 from .config import settings
 from .db import init_db
-from .routes import chat, eval, kb, mcp
+from .routes import chat, eval, kb, mcp, settings as settings_routes
 from .state import drop_kb_index, get_or_create_kb_index, indexes
 
 
@@ -31,7 +31,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Local Knowledge AI Assistant", lifespan=lifespan)
+app = FastAPI(title="easy-ai-database", lifespan=lifespan)
 
 if FastApiMCP is not None and settings.mcp_enable_legacy_fastapi_mount:
     mcp_server = FastApiMCP(app, name=settings.mcp_server_name)
@@ -51,6 +51,7 @@ app.include_router(kb.router)
 app.include_router(chat.router)
 app.include_router(eval.router)
 app.include_router(mcp.router)
+app.include_router(settings_routes.router)
 
 
 @app.get("/health")

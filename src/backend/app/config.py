@@ -25,7 +25,7 @@ def _get_env_path() -> Path:
     return candidates[0]
 
 
-def _load_env():
+def _load_env(*, override: bool = False) -> None:
     env_path = _get_env_path()
     if env_path.exists():
         with env_path.open(encoding="utf-8") as f:
@@ -33,7 +33,10 @@ def _load_env():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
-                    os.environ.setdefault(key.strip(), value.strip())
+                    key = key.strip()
+                    value = value.strip()
+                    if override or key not in os.environ:
+                        os.environ[key] = value
 
 
 _load_env()
@@ -121,9 +124,11 @@ class Settings(BaseModel):
     mock_mode: bool = False
     use_env_proxy: bool = True
     mcp_protocol_version: str = "2025-11-25"
-    mcp_server_name: str = "ima-simple-mcp"
+    mcp_server_name: str = "easy-ai-database-mcp"
     mcp_auth_token: str = ""
+    mcp_tools_enabled: bool = True
     mcp_enable_legacy_fastapi_mount: bool = False
+    deployment_url: str = ""
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -146,11 +151,13 @@ class Settings(BaseModel):
         self.mock_mode = os.getenv("MOCK_MODE", "0") == "1"
         self.use_env_proxy = os.getenv("USE_ENV_PROXY", "1") == "1"
         self.mcp_protocol_version = os.getenv("MCP_PROTOCOL_VERSION", "2025-11-25")
-        self.mcp_server_name = os.getenv("MCP_SERVER_NAME", "ima-simple-mcp")
+        self.mcp_server_name = os.getenv("MCP_SERVER_NAME", "easy-ai-database-mcp")
         self.mcp_auth_token = os.getenv("MCP_AUTH_TOKEN", "")
+        self.mcp_tools_enabled = os.getenv("MCP_TOOLS_ENABLED", "1") == "1"
         self.mcp_enable_legacy_fastapi_mount = (
             os.getenv("MCP_ENABLE_LEGACY_FASTAPI_MOUNT", "0") == "1"
         )
+        self.deployment_url = os.getenv("DEPLOYMENT_URL", "")
 
         self.rerank_base_url = os.getenv("RERANK_BASE_URL", self.llm_base_url)
         self.rerank_api_key = os.getenv("RERANK_API_KEY", self.llm_api_key)
@@ -196,6 +203,23 @@ class Settings(BaseModel):
 
 
 settings = Settings()
+
+
+def get_env_path() -> Path:
+    return _get_env_path()
+
+
+def reload_settings() -> Settings:
+    _load_env(override=True)
+    refreshed = Settings()
+    for field_name, field_value in refreshed.model_dump().items():
+        setattr(settings, field_name, field_value)
+    _ensure_no_proxy_for_local(settings.llm_base_url)
+    _ensure_no_proxy_for_local(settings.embed_base_url)
+    _ensure_no_proxy_for_local(settings.rerank_base_url)
+    _normalize_socks_proxy()
+    return settings
+
 
 _ensure_no_proxy_for_local(settings.llm_base_url)
 _ensure_no_proxy_for_local(settings.embed_base_url)

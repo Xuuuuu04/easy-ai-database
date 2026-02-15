@@ -68,3 +68,7 @@ class RetrievalRequest(BaseModel):
     kb_id: int = 1
     chat_id: Optional[int] = None
     top_k: int = 6
+
+
+class SettingsUpdateRequest(BaseModel):
+    variables: dict[str, str] = Field(default_factory=dict)

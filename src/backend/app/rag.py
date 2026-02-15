@@ -18,7 +18,7 @@ from .reranker import rerank_documents
 STREAM_CHUNK_SIZE = 48
 
 _SMALL_TALK_TEMPLATES = {
-    "greeting": "你好！我是本机知识库助手。你可以直接问我知识库里的问题，我会基于本地资料回答并给出来源。",
+    "greeting": "你好！我是 easy-ai-database 助手。你可以直接问我知识库里的问题，我会基于本地资料回答并给出来源。",
     "presence": "我在。你可以直接提问，我会优先基于本地知识库给出可追溯答案。",
     "thanks": "不客气！如果你愿意，我可以继续帮你查知识库里的问题。",
 }
