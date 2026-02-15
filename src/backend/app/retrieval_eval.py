@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import random
 import re
@@ -122,6 +123,44 @@ def _normalize_node(item: Any) -> dict[str, Any]:
     }
 
 
+def _normalize_content_for_fingerprint(content: Any) -> str:
+    raw = str(content or "")
+    return re.sub(r"\s+", " ", raw).strip()[:1200]
+
+
+def _item_dedup_key(item: dict[str, Any]) -> str:
+    item_id = item.get("id")
+    if item_id is not None:
+        return f"id:{item_id}"
+
+    doc_id = item.get("document_id")
+    source = str(item.get("source") or "")
+    page = str(item.get("page") or "")
+    normalized_content = _normalize_content_for_fingerprint(item.get("content"))
+    fingerprint = (
+        hashlib.sha1(normalized_content.encode("utf-8")).hexdigest()
+        if normalized_content
+        else ""
+    )
+    if source:
+        return f"source:{source}|page:{page}|fp:{fingerprint}"
+    if doc_id is not None:
+        return f"doc:{doc_id}|page:{page}|fp:{fingerprint}"
+    return f"page:{page}|fp:{fingerprint}"
+
+
+def _deduplicate_ranked_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _item_dedup_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(item)
+    return deduplicated
+
+
 def _retrieve_ranked(
     *,
     index: Optional[VectorStoreIndex],
@@ -155,11 +194,16 @@ def _retrieve_ranked(
         else:
             retriever = index.as_retriever(similarity_top_k=k * candidate_multiplier)
             ranked = retriever.retrieve(query)
-        normalized = [_normalize_node(item) for item in ranked]
+        normalized = _deduplicate_ranked_items(
+            [_normalize_node(item) for item in ranked]
+        )
     else:
-        normalized = [
-            _normalize_node(item) for item in search_chunks(query, limit=k, kb_id=kb_id)
-        ]
+        normalized = _deduplicate_ranked_items(
+            [
+                _normalize_node(item)
+                for item in search_chunks(query, limit=k, kb_id=kb_id)
+            ]
+        )
 
     use_reranker = bool(config.get("use_reranker", False))
     rerank_top_k = max(1, int(config.get("rerank_top_k", k)))
@@ -168,7 +212,9 @@ def _retrieve_ranked(
             {"content": item.get("content", ""), "item": item} for item in normalized
         ]
         reranked = rerank_documents(query, docs, top_k=rerank_top_k)
-        normalized = [doc["item"] for doc in reranked if "item" in doc]
+        normalized = _deduplicate_ranked_items(
+            [doc["item"] for doc in reranked if "item" in doc]
+        )
 
     return normalized[:final_top_k]
 
@@ -178,32 +224,92 @@ def _count_relevant_targets(case: dict[str, Any]) -> int:
         return len(set(case["relevant_ids"]))
     if case.get("relevant_snippets"):
         return len(case["relevant_snippets"])
-    if case.get("relevant_sources"):
-        return len(set(case["relevant_sources"]))
     if case.get("relevant_pages"):
         return len(set(case["relevant_pages"]))
+    if case.get("relevant_sources"):
+        return len(set(case["relevant_sources"]))
     return 0
 
 
+def _contains_any_snippet(content: str, snippets: list[Any]) -> bool:
+    lowered = content.lower()
+    for snippet in snippets:
+        token = str(snippet or "").strip().lower()
+        if token and token in lowered:
+            return True
+    return False
+
+
+def _to_snippet_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item or "") for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        return [value]
+    return []
+
+
+def _tokenize_for_similarity(text: str) -> set[str]:
+    return {token for token in re.findall(r"[\w\u4e00-\u9fff]+", text.lower()) if token}
+
+
+def _jaccard_similarity(left: str, right: str) -> float:
+    left_tokens = _tokenize_for_similarity(left)
+    right_tokens = _tokenize_for_similarity(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    intersection = left_tokens.intersection(right_tokens)
+    union = left_tokens.union(right_tokens)
+    return len(intersection) / len(union)
+
+
 def _is_relevant(item: dict[str, Any], case: dict[str, Any]) -> bool:
-    if case.get("relevant_ids") and item.get("id") in set(case["relevant_ids"]):
-        return True
-    if case.get("relevant_sources") and item.get("source") in set(
-        case["relevant_sources"]
-    ):
-        return True
-    if case.get("relevant_pages") and item.get("page") in set(case["relevant_pages"]):
+    if case.get("relevant_ids"):
+        return item.get("id") in set(case["relevant_ids"])
+
+    if case.get("relevant_snippets"):
+        content = str(item.get("content") or "").lower()
+        return _contains_any_snippet(content, case.get("relevant_snippets", []))
+
+    if case.get("relevant_pages"):
+        return item.get("page") in set(case["relevant_pages"])
+
+    if case.get("relevant_sources"):
+        return item.get("source") in set(case["relevant_sources"])
+
+    return False
+
+
+def _is_hard_negative(item: dict[str, Any], case: dict[str, Any]) -> bool:
+    hard_negative_ids = set(case.get("hard_negative_ids") or [])
+    if hard_negative_ids and item.get("id") in hard_negative_ids:
         return True
 
-    content = str(item.get("content") or "").lower()
-    snippets = [str(s).lower() for s in case.get("relevant_snippets", [])]
-    return any(snippet and snippet in content for snippet in snippets)
+    hard_negative_pages = set(case.get("hard_negative_pages") or [])
+    if hard_negative_pages and item.get("page") in hard_negative_pages:
+        return True
+
+    hard_negative_sources = set(case.get("hard_negative_sources") or [])
+    if hard_negative_sources and item.get("source") in hard_negative_sources:
+        return True
+
+    hard_negative_snippets = list(case.get("hard_negative_snippets") or [])
+    if hard_negative_snippets:
+        content = str(item.get("content") or "")
+        if _contains_any_snippet(content, hard_negative_snippets):
+            return True
+
+    return False
 
 
 def _compute_metrics(
-    relevance_flags: list[int], relevant_total: int, k: int
+    relevance_flags: list[int],
+    hard_negative_flags: list[int],
+    relevant_total: int,
+    k: int,
 ) -> dict[str, float]:
     top = relevance_flags[:k]
+    hard_negative_top = hard_negative_flags[:k]
+    top_count = len(top)
     hits = sum(top)
 
     precision = hits / k if k > 0 else 0.0
@@ -227,13 +333,67 @@ def _compute_metrics(
         idcg += 1.0 / math.log2(idx + 1)
     ndcg = dcg / idcg if idcg > 0 else 0.0
 
+    hard_negative_hits = sum(hard_negative_top)
+    hard_negative_hit_rate = 1.0 if hard_negative_hits > 0 else 0.0
+    hard_negative_ratio = hard_negative_hits / k if k > 0 else 0.0
+
+    false_positive_ratio = (top_count - hits) / top_count if top_count > 0 else 0.0
+    empty_result_rate = 1.0 if top_count == 0 else 0.0
+    abstain_success = 1.0 if relevant_total <= 0 and top_count == 0 else 0.0
+
     return {
         "precision@k": precision,
         "recall@k": recall,
         "hit_rate@k": hit_rate,
         "mrr@k": reciprocal_rank,
         "ndcg@k": ndcg,
+        "hard_negative_hit_rate@k": hard_negative_hit_rate,
+        "hard_negative_ratio@k": hard_negative_ratio,
+        "false_positive_ratio@k": false_positive_ratio,
+        "empty_result_rate@k": empty_result_rate,
+        "abstain_success@k": abstain_success,
     }
+
+
+def _best_config_sort_key(result: dict[str, Any]) -> tuple[float, ...]:
+    metrics = result.get("metrics") or {}
+    judge = result.get("llm_judge") or {}
+    judge_scores = judge.get("scores") if isinstance(judge, dict) else {}
+    judge_scores = judge_scores if isinstance(judge_scores, dict) else {}
+
+    hard_negative_ratio = _normalize_unit_score(
+        metrics.get("hard_negative_ratio@k", 0.0)
+    )
+    hard_negative_hit_rate = _normalize_unit_score(
+        metrics.get("hard_negative_hit_rate@k", 0.0)
+    )
+
+    has_judge = 1.0 if judge_scores else 0.0
+    judge_overall = _normalize_unit_score(judge_scores.get("overall", 0.0))
+    judge_faithfulness = _normalize_unit_score(judge_scores.get("faithfulness", 0.0))
+    judge_citation_precision = _normalize_unit_score(
+        judge_scores.get("citation_precision", 0.0)
+    )
+    judge_citation_recall = _normalize_unit_score(
+        judge_scores.get("citation_recall", 0.0)
+    )
+
+    return (
+        has_judge,
+        judge_overall,
+        judge_faithfulness,
+        judge_citation_precision,
+        judge_citation_recall,
+        1.0 - float(metrics.get("false_positive_ratio@k", 0.0)),
+        float(metrics.get("abstain_success@k", 0.0)),
+        1.0 - hard_negative_ratio,
+        1.0 - hard_negative_hit_rate,
+        float(metrics.get("ndcg@k", 0.0)),
+        float(metrics.get("mrr@k", 0.0)),
+        float(metrics.get("precision@k", 0.0)),
+        float(metrics.get("recall@k", 0.0)),
+        float(metrics.get("hit_rate@k", 0.0)),
+    )
 
 
 def _judge_single_case(
@@ -259,10 +419,13 @@ def _judge_single_case(
 
     prompt = (
         "You are a strict RAG evaluator. Score retrieval quality for one query.\n"
-        "Return JSON only with keys: relevance, coverage, groundedness, reason.\n"
+        "Return JSON only with keys: relevance, coverage, groundedness, citation_precision, citation_recall, faithfulness, reason.\n"
         "- relevance: how well retrieved chunks match user intent (0-1).\n"
         "- coverage: whether key evidence likely exists in retrieved chunks (0-1).\n"
         "- groundedness: internal consistency/non-noise quality of retrieved evidence (0-1).\n"
+        "- citation_precision: proportion of retrieved snippets that are truly useful evidence (0-1).\n"
+        "- citation_recall: proportion of expected evidence covered by retrieved snippets (0-1).\n"
+        "- faithfulness: confidence that answer built from these snippets would stay grounded (0-1).\n"
         "Use conservative scoring.\n\n"
         f"Query: {query}\n"
         f"Expected clues: {json.dumps(expected_hints, ensure_ascii=False)}\n"
@@ -275,12 +438,18 @@ def _judge_single_case(
             "relevance": 0.0,
             "coverage": 0.0,
             "groundedness": 0.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "faithfulness": 0.0,
             "reason": "judge_parse_failed",
         }
     return {
         "relevance": _normalize_unit_score(parsed.get("relevance")),
         "coverage": _normalize_unit_score(parsed.get("coverage")),
         "groundedness": _normalize_unit_score(parsed.get("groundedness")),
+        "citation_precision": _normalize_unit_score(parsed.get("citation_precision")),
+        "citation_recall": _normalize_unit_score(parsed.get("citation_recall")),
+        "faithfulness": _normalize_unit_score(parsed.get("faithfulness")),
         "reason": str(parsed.get("reason") or ""),
     }
 
@@ -297,6 +466,9 @@ def _evaluate_llm_judge(
                 "relevance": 0.0,
                 "coverage": 0.0,
                 "groundedness": 0.0,
+                "citation_precision": 0.0,
+                "citation_recall": 0.0,
+                "faithfulness": 0.0,
                 "overall": 0.0,
             },
             "cases": [],
@@ -312,6 +484,9 @@ def _evaluate_llm_judge(
     sum_relevance = 0.0
     sum_coverage = 0.0
     sum_groundedness = 0.0
+    sum_citation_precision = 0.0
+    sum_citation_recall = 0.0
+    sum_faithfulness = 0.0
 
     for case in selected_cases:
         judged = _judge_single_case(
@@ -322,6 +497,9 @@ def _evaluate_llm_judge(
         sum_relevance += judged["relevance"]
         sum_coverage += judged["coverage"]
         sum_groundedness += judged["groundedness"]
+        sum_citation_precision += judged["citation_precision"]
+        sum_citation_recall += judged["citation_recall"]
+        sum_faithfulness += judged["faithfulness"]
         judged_cases.append(
             {
                 "case_id": case.get("case_id"),
@@ -330,12 +508,18 @@ def _evaluate_llm_judge(
                     "relevance": judged["relevance"],
                     "coverage": judged["coverage"],
                     "groundedness": judged["groundedness"],
+                    "citation_precision": judged["citation_precision"],
+                    "citation_recall": judged["citation_recall"],
+                    "faithfulness": judged["faithfulness"],
                     "overall": (
                         judged["relevance"]
                         + judged["coverage"]
                         + judged["groundedness"]
+                        + judged["citation_precision"]
+                        + judged["citation_recall"]
+                        + judged["faithfulness"]
                     )
-                    / 3.0,
+                    / 6.0,
                 },
                 "reason": judged["reason"],
             }
@@ -346,10 +530,16 @@ def _evaluate_llm_judge(
         avg_relevance = 0.0
         avg_coverage = 0.0
         avg_groundedness = 0.0
+        avg_citation_precision = 0.0
+        avg_citation_recall = 0.0
+        avg_faithfulness = 0.0
     else:
         avg_relevance = sum_relevance / count
         avg_coverage = sum_coverage / count
         avg_groundedness = sum_groundedness / count
+        avg_citation_precision = sum_citation_precision / count
+        avg_citation_recall = sum_citation_recall / count
+        avg_faithfulness = sum_faithfulness / count
 
     return {
         "enabled": True,
@@ -358,7 +548,18 @@ def _evaluate_llm_judge(
             "relevance": avg_relevance,
             "coverage": avg_coverage,
             "groundedness": avg_groundedness,
-            "overall": (avg_relevance + avg_coverage + avg_groundedness) / 3.0,
+            "citation_precision": avg_citation_precision,
+            "citation_recall": avg_citation_recall,
+            "faithfulness": avg_faithfulness,
+            "overall": (
+                avg_relevance
+                + avg_coverage
+                + avg_groundedness
+                + avg_citation_precision
+                + avg_citation_recall
+                + avg_faithfulness
+            )
+            / 6.0,
         },
         "cases": judged_cases,
     }
@@ -417,6 +618,7 @@ def generate_retrieval_benchmark_dataset(
         sampled = qualified
 
     cases: list[dict[str, Any]] = []
+    all_contents = [str(item.get("content") or "") for item in qualified]
     for idx, chunk in enumerate(sampled):
         content = str(chunk.get("content") or "")
         generated = _generate_case_with_llm(content) if use_llm else None
@@ -425,11 +627,38 @@ def generate_retrieval_benchmark_dataset(
                 "query": _derive_query_from_chunk(content),
                 "relevant_snippets": [content[:36]],
             }
+
+        relevant_snippets = _to_snippet_list(generated.get("relevant_snippets"))
+        if not relevant_snippets:
+            relevant_snippets = [content[:36]]
+
+        negative_pool = [
+            text
+            for text in all_contents
+            if text
+            and text != content
+            and not _contains_any_snippet(text, relevant_snippets)
+        ]
+        hard_negative_snippets: list[str] = []
+        if negative_pool:
+            ranked_negatives = sorted(
+                negative_pool,
+                key=lambda candidate: (
+                    _jaccard_similarity(content, candidate),
+                    len(candidate),
+                ),
+                reverse=True,
+            )
+            top_bucket = ranked_negatives[: min(3, len(ranked_negatives))]
+            chosen_negative = rng.choice(top_bucket)
+            hard_negative_snippets = [chosen_negative[:36]]
+
         cases.append(
             {
                 "id": f"kb{kb_id}-case-{idx + 1}",
                 "query": generated["query"],
-                "relevant_snippets": generated["relevant_snippets"],
+                "relevant_snippets": relevant_snippets,
+                "hard_negative_snippets": hard_negative_snippets,
             }
         )
 
@@ -498,8 +727,12 @@ def run_retrieval_evaluation(
             )
 
             relevance_flags = [1 if _is_relevant(item, case) else 0 for item in ranked]
+            hard_negative_flags = [
+                1 if _is_hard_negative(item, case) else 0 for item in ranked
+            ]
             metrics = _compute_metrics(
                 relevance_flags=relevance_flags,
+                hard_negative_flags=hard_negative_flags,
                 relevant_total=_count_relevant_targets(case),
                 k=k,
             )
@@ -523,6 +756,11 @@ def run_retrieval_evaluation(
                 "hit_rate@k": 0.0,
                 "mrr@k": 0.0,
                 "ndcg@k": 0.0,
+                "hard_negative_hit_rate@k": 0.0,
+                "hard_negative_ratio@k": 0.0,
+                "false_positive_ratio@k": 0.0,
+                "empty_result_rate@k": 0.0,
+                "abstain_success@k": 0.0,
             }
         else:
             averaged = {
@@ -533,6 +771,26 @@ def run_retrieval_evaluation(
                 / valid_cases,
                 "mrr@k": sum(m["mrr@k"] for m in metrics_by_case) / valid_cases,
                 "ndcg@k": sum(m["ndcg@k"] for m in metrics_by_case) / valid_cases,
+                "hard_negative_hit_rate@k": sum(
+                    m["hard_negative_hit_rate@k"] for m in metrics_by_case
+                )
+                / valid_cases,
+                "hard_negative_ratio@k": sum(
+                    m["hard_negative_ratio@k"] for m in metrics_by_case
+                )
+                / valid_cases,
+                "false_positive_ratio@k": sum(
+                    m["false_positive_ratio@k"] for m in metrics_by_case
+                )
+                / valid_cases,
+                "empty_result_rate@k": sum(
+                    m["empty_result_rate@k"] for m in metrics_by_case
+                )
+                / valid_cases,
+                "abstain_success@k": sum(
+                    m["abstain_success@k"] for m in metrics_by_case
+                )
+                / valid_cases,
             }
 
         payload: dict[str, Any] = {
@@ -546,16 +804,7 @@ def run_retrieval_evaluation(
             payload["cases"] = case_results
         results.append(payload)
 
-    best = None
-    if results:
-        best = max(
-            results,
-            key=lambda r: (
-                r["metrics"]["ndcg@k"],
-                r["metrics"]["mrr@k"],
-                r["metrics"]["hit_rate@k"],
-            ),
-        )
+    best = max(results, key=_best_config_sort_key) if results else None
 
     if include_llm_judge and results:
         if llm_judge_on_all_configs:
@@ -564,6 +813,7 @@ def run_retrieval_evaluation(
                     result.get("_judge_cases", []),
                     sample_size=max(1, llm_judge_sample_size),
                 )
+            best = max(results, key=_best_config_sort_key)
         elif best is not None:
             best["llm_judge"] = _evaluate_llm_judge(
                 best.get("_judge_cases", []),

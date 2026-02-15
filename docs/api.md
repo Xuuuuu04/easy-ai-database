@@ -97,5 +97,43 @@
 ```
 
 ## MCP
-- 安装 `fastapi-mcp` 后，服务会自动挂载 `/mcp`。
-- 通过 MCP 客户端可直接调用现有 FastAPI 路由（含 `/retrieve`、`/chat/rag`、`/chat/agent` 等）。
+- 标准 MCP 端点：`POST /mcp/v1`（JSON-RPC 2.0），`GET /mcp/v1`（SSE keep-alive）。
+- 协议版本：默认 `2025-11-25`，响应头包含 `MCP-Protocol-Version`。
+- 支持方法：`initialize`、`ping`、`tools/list`、`tools/call`、`resources/list`、`resources/read`、`resources/templates/list`、`prompts/list`、`prompts/get`。
+- 工具集（核心）：
+  - `kb.list` / `kb.create` / `kb.delete` / `kb.reindex`
+  - `kb.documents.list` / `kb.documents.delete` / `kb.documents.batch_delete` / `kb.documents.reindex`
+  - `kb.ingest.url` / `kb.ingest.file_path`
+  - `kb.retrieve` / `kb.answer.rag` / `kb.answer.agent` / `kb.preview`
+  - `chat.history.list` / `chat.get`
+- 资源 URI：
+  - `kb://{kb_id}`
+  - `kb://{kb_id}/documents`
+  - `kb://{kb_id}/chats`
+  - `kb://{kb_id}/chat/{chat_id}`
+  - `kb://{kb_id}/document/{doc_id}`
+- 提示模板：`kb-grounded-answer`、`kb-research-workflow`。
+
+### MCP 鉴权
+- 环境变量 `MCP_AUTH_TOKEN` 为空时不鉴权。
+- 设置后需携带 `Authorization: Bearer <token>` 调用 `/mcp/v1`。
+
+### Claude Code 连接（stdio）
+- 启动脚本：`scripts/mcp_stdio.py`。
+- Claude Code 示例配置：
+```json
+{
+  "mcpServers": {
+    "ima-simple": {
+      "command": "python",
+      "args": ["/Users/xushaoyang/Desktop/ima-simple/scripts/mcp_stdio.py"],
+      "env": {
+        "DATA_DIR": "/Users/xushaoyang/Desktop/ima-simple/data",
+        "DB_PATH": "/Users/xushaoyang/Desktop/ima-simple/data/app.db",
+        "INDEX_DIR": "/Users/xushaoyang/Desktop/ima-simple/data/index",
+        "MCP_PROTOCOL_VERSION": "2025-11-25"
+      }
+    }
+  }
+}
+```

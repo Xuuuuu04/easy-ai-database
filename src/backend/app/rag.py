@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Generator, Optional
 
@@ -32,6 +33,77 @@ _TRAILING_SUFFIX_PATTERN = re.compile(
     r"(是什么|是啥|有哪些|有什么|怎么用|如何使用|如何|详解|介绍|简介)$"
 )
 _TRAILING_PARTICLE_PATTERN = re.compile(r"(吗|呢|呀|啊)$")
+
+
+def _extract_focus_question(question: str) -> str:
+    if not settings.retrieval_focus_on_current_question:
+        return question
+    marker = "当前问题:"
+    if marker in question:
+        focused = question.split(marker)[-1].strip()
+        if focused:
+            return focused
+    return question
+
+
+def _relevance_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[\w\u4e00-\u9fff]+", text.lower())
+        if len(token) >= 2
+    }
+
+
+def _token_overlap_ratio(query: str, content: str) -> float:
+    query_tokens = _relevance_tokens(query)
+    content_tokens = _relevance_tokens(content)
+    if not query_tokens or not content_tokens:
+        return 0.0
+    overlap = len(query_tokens.intersection(content_tokens))
+    return overlap / max(1, len(query_tokens))
+
+
+def _read_rerank_score(meta: dict[str, Any]) -> float | None:
+    score = meta.get("rerank_score")
+    if score is None:
+        return None
+    try:
+        return float(score)
+    except Exception:
+        return None
+
+
+def _filter_nodes_by_quality(nodes: list[Any], query: str) -> list[Any]:
+    if not settings.retrieval_enable_quality_gate:
+        return nodes
+
+    min_overlap = max(0.0, settings.retrieval_min_token_overlap)
+    min_rerank_score = settings.retrieval_min_rerank_score
+    filtered: list[Any] = []
+
+    for node in nodes:
+        content, meta = _extract_content_and_metadata(node)
+        overlap = _token_overlap_ratio(query, content)
+        rerank_score = _read_rerank_score(meta)
+
+        keep = overlap >= min_overlap
+        if not keep and rerank_score is not None and overlap > 0:
+            keep = rerank_score >= min_rerank_score
+
+        if keep:
+            filtered.append(node)
+
+    return filtered
+
+
+def _average_hit_overlap(query: str, payload_hits: list[dict[str, Any]]) -> float:
+    if not payload_hits:
+        return 0.0
+    overlaps: list[float] = []
+    for hit in payload_hits:
+        text = str(hit.get("content") or hit.get("snippet") or "")
+        overlaps.append(_token_overlap_ratio(query, text))
+    return sum(overlaps) / max(1, len(overlaps))
 
 
 def _normalize_text(text: str) -> str:
@@ -126,10 +198,84 @@ def _extract_content_and_metadata(node: Any) -> tuple[str, dict[str, Any]]:
     return ("" if base is None else str(base), {})
 
 
-def _build_citations_from_nodes(nodes) -> list[dict[str, Any]]:
-    citations = []
+def _normalize_content_for_fingerprint(content: str) -> str:
+    return re.sub(r"\s+", " ", content).strip()[:1200]
+
+
+def _content_fingerprint(content: str) -> str:
+    normalized = _normalize_content_for_fingerprint(content)
+    if not normalized:
+        return ""
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+
+def _evidence_dedup_key(content: str, meta: dict[str, Any]) -> str:
+    chunk_id = meta.get("chunk_id") or meta.get("id")
+    if chunk_id is not None:
+        return f"chunk:{chunk_id}"
+
+    source = str(meta.get("source") or "")
+    page = str(meta.get("page") or "")
+    document_id = str(meta.get("document_id") or "")
+    fingerprint = _content_fingerprint(content)
+    if source:
+        return f"source:{source}|page:{page}|fp:{fingerprint}"
+    if document_id:
+        return f"doc:{document_id}|page:{page}|fp:{fingerprint}"
+    return f"page:{page}|fp:{fingerprint}"
+
+
+def _deduplicate_nodes(nodes: list[Any], limit: int | None = None) -> list[Any]:
+    deduplicated: list[Any] = []
+    seen: set[str] = set()
+    max_items = limit if limit is not None and limit > 0 else None
+
     for node in nodes:
         content, meta = _extract_content_and_metadata(node)
+        key = _evidence_dedup_key(content, meta)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(node)
+        if max_items is not None and len(deduplicated) >= max_items:
+            break
+
+    return deduplicated
+
+
+def _deduplicate_hits(hits: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        content = str(hit.get("content") or "")
+        key = _evidence_dedup_key(
+            content,
+            {
+                "source": hit.get("source"),
+                "page": hit.get("page"),
+                "document_id": hit.get("document_id"),
+            },
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(hit)
+        if len(deduplicated) >= limit:
+            break
+    return deduplicated
+
+
+def _build_citations_from_nodes(nodes) -> list[dict[str, Any]]:
+    citations = []
+    seen: set[str] = set()
+    for node in nodes:
+        content, meta = _extract_content_and_metadata(node)
+        if not content:
+            continue
+        key = _evidence_dedup_key(content, meta)
+        if key in seen:
+            continue
+        seen.add(key)
         citations.append(
             {
                 "source": meta.get("source"),
@@ -201,7 +347,8 @@ def _rewrite_queries(question: str) -> list[str]:
         _push(f"{core} 是什么")
         _push(f"{core} 介绍")
 
-    return variants
+    max_rewrites = max(1, settings.retrieval_max_rewrites)
+    return variants[:max_rewrites]
 
 
 def _retrieve_candidates(
@@ -225,9 +372,7 @@ def _retrieve_candidates(
 
 def _node_dedup_key(node: Any) -> str:
     content, meta = _extract_content_and_metadata(node)
-    source = str(meta.get("source") or "")
-    page = str(meta.get("page") or "")
-    return f"{source}|{page}|{content[:200]}"
+    return _evidence_dedup_key(content, meta)
 
 
 def _retrieve_with_rewrites(
@@ -286,7 +431,12 @@ def _stream_answer_from_context(
 ) -> Generator[str, None, None]:
     llm = get_llm()
     prompt = (
-        "请基于以下上下文回答问题，必须引用来源：\n"
+        "你是严格的知识库问答助手。\n"
+        "只允许使用给定上下文，不得使用外部知识。\n"
+        "如果上下文不足以回答，请只输出：未找到相关信息。\n"
+        "必须保留证据中的关键术语、实体名、编号、代码与专有 token 原文，不可改写。\n"
+        "若问题询问定义或结论，请优先给出上下文原句，至少保留核心词原文。\n"
+        '请在结尾给出"引用来源"并仅引用上下文中的证据。\n'
         f"问题：{question}\n\n"
         f"上下文：\n{context}\n"
     )
@@ -298,6 +448,9 @@ def _apply_reranking(
     query: str,
 ) -> list[Any]:
     if not nodes or not settings.rerank_model:
+        return nodes
+
+    if len(nodes) <= settings.max_context_chunks:
         return nodes
 
     docs = []
@@ -316,7 +469,21 @@ def _apply_reranking(
         return nodes
 
     reranked = rerank_documents(query, docs, top_k=settings.max_context_chunks)
-    return [doc["node"] for doc in reranked]
+    reranked_nodes: list[Any] = []
+    for doc in reranked:
+        node = doc.get("node")
+        if node is None:
+            continue
+        score = doc.get("relevance_score")
+        if score is not None:
+            if isinstance(node, dict):
+                node["rerank_score"] = score
+            else:
+                metadata = getattr(node, "metadata", None)
+                if isinstance(metadata, dict):
+                    metadata["rerank_score"] = score
+        reranked_nodes.append(node)
+    return reranked_nodes
 
 
 class RAGPipeline:
@@ -354,6 +521,7 @@ class RAGPipeline:
             return {"answer": smalltalk_answer, "citations": []}
 
         enhanced_question = _build_context_with_history(question, chat_id, kb_id=kb_id)
+        retrieval_question = _extract_focus_question(enhanced_question)
 
         cached = semantic_cache.get(enhanced_question, kb_id=kb_id)
         if cached:
@@ -366,12 +534,24 @@ class RAGPipeline:
 
         retrieved_nodes = _retrieve_with_rewrites(
             index,
-            enhanced_question,
+            retrieval_question,
             bm25_index,
             chunks,
         )
+        if not retrieved_nodes and retrieval_question != enhanced_question:
+            retrieved_nodes = _retrieve_with_rewrites(
+                index,
+                enhanced_question,
+                bm25_index,
+                chunks,
+            )
 
-        reranked_nodes = _apply_reranking(retrieved_nodes, enhanced_question)
+        reranked_nodes = _apply_reranking(retrieved_nodes, retrieval_question)
+        unfiltered_nodes = list(reranked_nodes)
+        reranked_nodes = _filter_nodes_by_quality(reranked_nodes, retrieval_question)
+        if not reranked_nodes and unfiltered_nodes:
+            reranked_nodes = unfiltered_nodes
+        reranked_nodes = _deduplicate_nodes(reranked_nodes)
 
         citations = _build_citations_from_nodes(
             reranked_nodes[: settings.max_context_chunks]
@@ -393,8 +573,13 @@ class RAGPipeline:
         context = "\n\n".join(context_chunks)
         llm = get_llm()
         prompt = (
-            "请基于以下上下文回答问题，必须引用来源：\n"
-            f"问题：{enhanced_question}\n\n"
+            "你是严格的知识库问答助手。\n"
+            "只允许使用给定上下文，不得使用外部知识。\n"
+            "如果上下文不足以回答，请只输出：未找到相关信息。\n"
+            "必须保留证据中的关键术语、实体名、编号、代码与专有 token 原文，不可改写。\n"
+            "若问题询问定义或结论，请优先给出上下文原句，至少保留核心词原文。\n"
+            '请在结尾给出"引用来源"并仅引用上下文中的证据。\n'
+            f"问题：{question}\n\n"
             f"上下文：\n{context}\n"
         )
         response = llm.complete(prompt)
@@ -422,6 +607,7 @@ class RAGPipeline:
             return _single_chunk_stream(smalltalk_answer), []
 
         enhanced_question = _build_context_with_history(question, chat_id, kb_id=kb_id)
+        retrieval_question = _extract_focus_question(enhanced_question)
 
         cached = semantic_cache.get(enhanced_question, kb_id=kb_id)
         if cached:
@@ -434,12 +620,24 @@ class RAGPipeline:
 
         retrieved_nodes = _retrieve_with_rewrites(
             index,
-            enhanced_question,
+            retrieval_question,
             bm25_index,
             chunks,
         )
+        if not retrieved_nodes and retrieval_question != enhanced_question:
+            retrieved_nodes = _retrieve_with_rewrites(
+                index,
+                enhanced_question,
+                bm25_index,
+                chunks,
+            )
 
-        reranked_nodes = _apply_reranking(retrieved_nodes, enhanced_question)
+        reranked_nodes = _apply_reranking(retrieved_nodes, retrieval_question)
+        unfiltered_nodes = list(reranked_nodes)
+        reranked_nodes = _filter_nodes_by_quality(reranked_nodes, retrieval_question)
+        if not reranked_nodes and unfiltered_nodes:
+            reranked_nodes = unfiltered_nodes
+        reranked_nodes = _deduplicate_nodes(reranked_nodes)
         citations = _build_citations_from_nodes(
             reranked_nodes[: settings.max_context_chunks]
         )
@@ -461,7 +659,7 @@ class RAGPipeline:
 
         def _stream_with_cache():
             chunks = []
-            for chunk in _stream_answer_from_context(enhanced_question, context):
+            for chunk in _stream_answer_from_context(question, context):
                 chunks.append(chunk)
                 yield chunk
             final_answer = "".join(chunks)
@@ -474,6 +672,7 @@ class RAGPipeline:
         if not hits:
             hits = list_chunks(limit=settings.max_context_chunks, kb_id=kb_id)
         hits = _filter_placeholder_hits(hits)
+        hits = _deduplicate_hits(hits, settings.max_context_chunks)
         if not hits:
             return {"answer": "未能检索到相关上下文。", "citations": []}
         citations = [
@@ -490,6 +689,7 @@ class RAGPipeline:
         if not hits:
             hits = list_chunks(limit=settings.max_context_chunks, kb_id=kb_id)
         hits = _filter_placeholder_hits(hits)
+        hits = _deduplicate_hits(hits, settings.max_context_chunks)
         if not hits:
             return _single_chunk_stream("未能检索到相关上下文。"), []
         citations = [
@@ -550,35 +750,57 @@ def retrieve_context(
 ) -> dict[str, Any]:
     effective_top_k = max(1, top_k)
     enhanced_question = _build_context_with_history(question, chat_id, kb_id=kb_id)
-    rewrites = _rewrite_queries(enhanced_question)
+    retrieval_question = _extract_focus_question(enhanced_question)
+    rewrites = _rewrite_queries(retrieval_question)
 
     if settings.mock_mode or index is None:
-        hits = search_chunks(enhanced_question, limit=effective_top_k, kb_id=kb_id)
+        hits = search_chunks(retrieval_question, limit=effective_top_k, kb_id=kb_id)
         if not hits:
             hits = list_chunks(limit=effective_top_k, kb_id=kb_id)
         hits = _filter_placeholder_hits(hits)
+        hits = _deduplicate_hits(hits, effective_top_k)
+        diagnostics_hits = [
+            {
+                "source": "local",
+                "page": hit.get("page"),
+                "snippet": str(hit.get("content") or "")[:220],
+                "content": str(hit.get("content") or ""),
+            }
+            for hit in hits[:effective_top_k]
+        ]
         return {
             "query": enhanced_question,
+            "retrieval_query": retrieval_question,
             "rewrites": rewrites,
-            "hits": [
-                {
-                    "source": "local",
-                    "page": hit.get("page"),
-                    "snippet": str(hit.get("content") or "")[:220],
-                    "content": str(hit.get("content") or ""),
-                }
-                for hit in hits[:effective_top_k]
-            ],
+            "hits": diagnostics_hits,
+            "diagnostics": {
+                "candidate_count": len(diagnostics_hits),
+                "kept_count": len(diagnostics_hits),
+                "low_confidence": len(diagnostics_hits) == 0,
+                "avg_token_overlap": _average_hit_overlap(
+                    retrieval_question, diagnostics_hits
+                ),
+            },
         }
 
     bm25_index, chunks = rag_pipeline._get_bm25_index(kb_id)
     retrieved_nodes = _retrieve_with_rewrites(
         index,
-        enhanced_question,
+        retrieval_question,
         bm25_index,
         chunks,
     )
-    reranked_nodes = _apply_reranking(retrieved_nodes, enhanced_question)
+    if not retrieved_nodes and retrieval_question != enhanced_question:
+        retrieved_nodes = _retrieve_with_rewrites(
+            index,
+            enhanced_question,
+            bm25_index,
+            chunks,
+        )
+    reranked_nodes = _apply_reranking(retrieved_nodes, retrieval_question)
+    candidate_count = len(reranked_nodes)
+    reranked_nodes = _filter_nodes_by_quality(reranked_nodes, retrieval_question)
+    reranked_nodes = _deduplicate_nodes(reranked_nodes)
 
     payload_hits: list[dict[str, Any]] = []
     for node in reranked_nodes[:effective_top_k]:
@@ -595,6 +817,13 @@ def retrieve_context(
 
     return {
         "query": enhanced_question,
+        "retrieval_query": retrieval_question,
         "rewrites": rewrites,
         "hits": payload_hits,
+        "diagnostics": {
+            "candidate_count": candidate_count,
+            "kept_count": len(payload_hits),
+            "low_confidence": len(payload_hits) == 0,
+            "avg_token_overlap": _average_hit_overlap(retrieval_question, payload_hits),
+        },
     }

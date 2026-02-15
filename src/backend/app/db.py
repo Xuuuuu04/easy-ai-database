@@ -100,6 +100,7 @@ def init_db() -> None:
         )
         """
     )
+    _migrate_existing_schema(cur)
     cur.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_chunks_document_id
@@ -130,7 +131,6 @@ def init_db() -> None:
         ON agent_steps(chat_id, step_index)
         """
     )
-    _migrate_existing_schema(cur)
     _ensure_default_knowledge_base(cur)
     conn.commit()
     conn.close()
@@ -748,3 +748,26 @@ def list_chunks(limit: int = 6, kb_id: Optional[int] = 1) -> list[dict[str, Any]
     rows = [dict(row) for row in cur.fetchall()]
     conn.close()
     return rows
+
+
+def source_ref_registered_for_kb(source_path: Path, kb_id: int) -> bool:
+    normalized = source_path.resolve()
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT source_ref FROM documents WHERE kb_id = ?", (kb_id,))
+    rows = [str(row[0]) for row in cur.fetchall()]
+    conn.close()
+
+    for source_ref in rows:
+        try:
+            candidate = Path(source_ref).expanduser()
+            if not candidate.is_absolute():
+                candidate = (Path.cwd() / candidate).resolve()
+            else:
+                candidate = candidate.resolve()
+        except Exception:
+            continue
+        if candidate == normalized:
+            return True
+
+    return False

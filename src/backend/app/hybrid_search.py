@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -21,10 +22,56 @@ def _tokenize(text: str) -> list[str]:
 
     tokens = _LATIN_TOKEN_PATTERN.findall(normalized)
     for segment in _CJK_SEGMENT_PATTERN.findall(normalized):
-        tokens.extend(segment)
+        tokens.append(segment)
         if len(segment) > 1:
             tokens.extend(segment[idx : idx + 2] for idx in range(len(segment) - 1))
     return tokens
+
+
+def _doc_fusion_key(doc: Any) -> str:
+    if isinstance(doc, dict):
+        chunk_id = doc.get("id") or doc.get("chunk_id")
+        if chunk_id is not None:
+            return f"chunk:{chunk_id}"
+
+        document_id = doc.get("document_id")
+        source = str(doc.get("source") or "")
+        page = str(doc.get("page") or "")
+        content = str(doc.get("content") or "")
+        normalized = " ".join(content.split())[:600]
+        fingerprint = (
+            hashlib.sha1(normalized.encode("utf-8")).hexdigest() if normalized else ""
+        )
+        if source:
+            return f"source:{source}|page:{page}|fp:{fingerprint}"
+        if document_id is not None:
+            return f"doc:{document_id}|page:{page}|fp:{fingerprint}"
+        return f"page:{page}|fp:{fingerprint}"
+
+    metadata = getattr(doc, "metadata", {}) or {}
+    if isinstance(metadata, dict):
+        chunk_id = metadata.get("chunk_id") or metadata.get("id")
+        if chunk_id is not None:
+            return f"chunk:{chunk_id}"
+        document_id = metadata.get("document_id")
+        source = str(metadata.get("source") or "")
+        page = str(metadata.get("page") or "")
+    else:
+        document_id = None
+        source = ""
+        page = ""
+
+    get_content = getattr(doc, "get_content", None)
+    content = get_content() if callable(get_content) else str(doc)
+    normalized = " ".join(str(content).split())[:600]
+    fingerprint = (
+        hashlib.sha1(normalized.encode("utf-8")).hexdigest() if normalized else ""
+    )
+    if source:
+        return f"source:{source}|page:{page}|fp:{fingerprint}"
+    if document_id is not None:
+        return f"doc:{document_id}|page:{page}|fp:{fingerprint}"
+    return f"page:{page}|fp:{fingerprint}"
 
 
 def build_bm25_index(chunks: list[dict[str, Any]]) -> BM25Okapi | None:
@@ -92,21 +139,21 @@ def reciprocal_rank_fusion(
     Returns:
         融合后的分块列表
     """
-    scores: dict[int, float] = {}
-    doc_map: dict[int, dict[str, Any]] = {}
+    scores: dict[str, float] = {}
+    doc_map: dict[str, Any] = {}
 
     for rank, (doc, _) in enumerate(vector_results):
-        doc_id = id(doc)
-        scores[doc_id] = scores.get(doc_id, 0) + vector_weight / (k + rank + 1)
-        doc_map[doc_id] = doc
+        doc_key = _doc_fusion_key(doc)
+        scores[doc_key] = scores.get(doc_key, 0) + vector_weight / (k + rank + 1)
+        doc_map[doc_key] = doc
 
     for rank, (doc, _) in enumerate(bm25_results):
-        doc_id = id(doc)
-        scores[doc_id] = scores.get(doc_id, 0) + bm25_weight / (k + rank + 1)
-        doc_map[doc_id] = doc
+        doc_key = _doc_fusion_key(doc)
+        scores[doc_key] = scores.get(doc_key, 0) + bm25_weight / (k + rank + 1)
+        doc_map[doc_key] = doc
 
     sorted_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [doc_map[doc_id] for doc_id, _ in sorted_docs]
+    return [doc_map[doc_key] for doc_key, _ in sorted_docs]
 
 
 def hybrid_retrieve(
@@ -169,11 +216,17 @@ def get_all_chunks_from_db(kb_id: int | None = 1) -> list[dict[str, Any]]:
     conn = get_conn()
     cur = conn.cursor()
     if kb_id is None:
-        cur.execute("SELECT id, document_id, content, page FROM chunks")
+        cur.execute(
+            """
+            SELECT c.id, c.document_id, c.content, c.page, d.source_ref AS source
+            FROM chunks c
+            INNER JOIN documents d ON d.id = c.document_id
+            """
+        )
     else:
         cur.execute(
             """
-            SELECT c.id, c.document_id, c.content, c.page
+            SELECT c.id, c.document_id, c.content, c.page, d.source_ref AS source
             FROM chunks c
             INNER JOIN documents d ON d.id = c.document_id
             WHERE d.kb_id = ?

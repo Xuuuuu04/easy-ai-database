@@ -6,6 +6,7 @@ import importlib
 import sys
 import json
 from pathlib import Path
+from typing import Any, Optional
 
 from fastapi.testclient import TestClient
 
@@ -351,6 +352,279 @@ def test_agent_stream_emits_multiple_chunks_for_long_text():
         assert done_events
 
 
+def test_agent_stream_emits_research_events_with_step_metadata():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_db = importlib.import_module("backend.app.db")
+        app_db.init_db()
+
+        doc_id = app_db.insert_document("agent-events.txt", "file", "agent-events.txt")
+        app_db.insert_chunks(
+            doc_id,
+            [{"content": "Python is a programming language.", "page": 1}],
+        )
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/chat/agent", json={"question": "请研究 python", "stream": True}
+            )
+
+        assert resp.status_code == 200
+        payloads = []
+        for line in resp.text.splitlines():
+            if line.startswith("data: "):
+                payloads.append(json.loads(line[6:]))
+
+        start_events = [
+            item for item in payloads if item.get("event") == "agent_research_start"
+        ]
+        step_events = [item for item in payloads if item.get("event") == "agent_step"]
+        done_events = [item for item in payloads if item.get("done")]
+
+        assert start_events
+        assert step_events
+        assert done_events
+        assert done_events[-1].get("mode") == "agent"
+
+        first_step = step_events[0].get("step") or {}
+        assert first_step.get("tool")
+        assert first_step.get("round")
+        assert first_step.get("status") in {"ok", "error"}
+
+
+def test_agent_records_search_tool_error_and_recovers(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_agent = importlib.import_module("backend.app.agent")
+
+        state = {"calls": 0}
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("search failed")
+            return {
+                "answer": "命中证据",
+                "citations": [
+                    {"source": "doc://a", "page": 1, "snippet": "命中证据片段"}
+                ],
+            }
+
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+
+        with TestClient(app) as client:
+            resp = client.post("/chat/agent", json={"question": "什么是 Python？"})
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        search_steps = [
+            step for step in payload["steps"] if step.get("tool") == "search_kb"
+        ]
+        assert any(step.get("error") for step in search_steps)
+        assert any(step.get("citations") for step in search_steps)
+        assert payload["citations"]
+
+
+def test_agent_fetch_url_failure_is_reported_without_crash(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_agent = importlib.import_module("backend.app.agent")
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            return {"answer": "未能检索到相关上下文。", "citations": []}
+
+        def fake_extract_text_from_url(url: str) -> str:
+            raise ValueError("url fetch failed")
+
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+        monkeypatch.setattr(
+            app_agent, "extract_text_from_url", fake_extract_text_from_url
+        )
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/chat/agent",
+                json={"question": "请检查这个链接 https://example.com/docs)."},
+            )
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        fetch_steps = [
+            step for step in payload["steps"] if step.get("tool") == "fetch_url"
+        ]
+        assert fetch_steps
+        assert fetch_steps[0].get("input") == "https://example.com/docs"
+        assert "url fetch failed" in str(fetch_steps[0].get("error") or "")
+
+
+def test_agent_deduplicates_citations_across_rounds(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_agent = importlib.import_module("backend.app.agent")
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            return {
+                "answer": "相同证据回答",
+                "citations": [
+                    {"source": "doc://same", "page": 1, "snippet": "重复引用片段"}
+                ],
+            }
+
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+
+        with TestClient(app) as client:
+            resp = client.post("/chat/agent", json={"question": "什么是测试系统？"})
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert len(payload["citations"]) == 1
+
+
+def test_agent_respects_max_rounds_limit(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_agent = importlib.import_module("backend.app.agent")
+
+        state = {"calls": 0}
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            state["calls"] += 1
+            return {"answer": "未能检索到相关上下文。", "citations": []}
+
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+        monkeypatch.setattr(app_agent.settings, "agent_max_rounds", 2)
+
+        with TestClient(app) as client:
+            resp = client.post("/chat/agent", json={"question": "什么是 Python？"})
+
+        assert resp.status_code == 200
+        assert state["calls"] <= 2
+
+
+def test_agent_second_turn_uses_chat_history_context(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_agent = importlib.import_module("backend.app.agent")
+
+        captured_questions: list[str] = []
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            captured_questions.append(question)
+            return {
+                "answer": "命中证据",
+                "citations": [{"source": "doc://x", "page": 1, "snippet": "证据"}],
+            }
+
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+
+        with TestClient(app) as client:
+            first = client.post("/chat/agent", json={"question": "第一问"})
+            assert first.status_code == 200
+            chat_id = first.json()["chat_id"]
+
+            second = client.post(
+                "/chat/agent",
+                json={"question": "第二问", "chat_id": chat_id},
+            )
+
+        assert second.status_code == 200
+        assert any("当前问题" in q for q in captured_questions)
+
+
+def test_agent_non_mock_can_plan_followup_query(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.environ["DATA_DIR"] = tmpdir
+        os.environ["DB_PATH"] = str(Path(tmpdir) / "app.db")
+        os.environ["INDEX_DIR"] = str(Path(tmpdir) / "index")
+        os.environ["MOCK_MODE"] = "0"
+
+        project_root = Path(__file__).resolve().parents[2]
+        sys.path.insert(0, str(project_root))
+
+        app_config = importlib.import_module("backend.app.config")
+        app_db = importlib.import_module("backend.app.db")
+        main = importlib.import_module("backend.app.main")
+        importlib.reload(app_config)
+        importlib.reload(app_db)
+        importlib.reload(main)
+
+        app_agent = importlib.import_module("backend.app.agent")
+
+        class _FakeLLM:
+            def complete(self, prompt: str):
+                return type("Resp", (), {"text": "最终总结"})()
+
+        seen_queries: list[str] = []
+
+        def fake_query_rag(
+            index: Any,
+            question: str,
+            chat_id: Optional[int] = None,
+            kb_id: int = 1,
+        ) -> dict[str, Any]:
+            seen_queries.append(question)
+            if len(seen_queries) == 1:
+                return {"answer": "未能检索到相关上下文。", "citations": []}
+            return {
+                "answer": "二轮检索命中",
+                "citations": [
+                    {"source": "doc://followup", "page": 1, "snippet": "二次证据"}
+                ],
+            }
+
+        def fake_plan_followup_queries(
+            question: str,
+            steps: list[dict[str, Any]],
+            exclude: set[str],
+            max_queries: int,
+        ) -> list[str]:
+            if max_queries <= 0:
+                return []
+            return ["二次检索关键词"]
+
+        monkeypatch.setattr(app_agent, "get_llm", lambda: _FakeLLM())
+        monkeypatch.setattr(app_agent, "query_rag", fake_query_rag)
+        monkeypatch.setattr(
+            app_agent, "_plan_followup_queries", fake_plan_followup_queries
+        )
+        monkeypatch.setattr(app_agent.settings, "mock_mode", False)
+        monkeypatch.setattr(
+            app_agent.settings, "agent_enable_llm_search_fallback", True
+        )
+
+        with TestClient(main.app) as client:
+            resp = client.post("/chat/agent", json={"question": "解释这个概念"})
+
+        assert resp.status_code == 200
+        assert len(seen_queries) >= 2
+        assert any("二次检索关键词" in query for query in seen_queries)
+
+
 def test_retrieval_eval_endpoint_returns_expected_metrics_for_controlled_cases():
     with tempfile.TemporaryDirectory() as tmpdir:
         app = create_app(tmpdir)
@@ -411,6 +685,129 @@ def test_retrieval_eval_endpoint_returns_expected_metrics_for_controlled_cases()
 
         assert data["best_config"]["config_id"] == 1
         assert data["best_config"]["config"]["candidate_top_k"] == 2
+
+
+def test_retrieval_eval_reports_hard_negative_metrics():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_db = importlib.import_module("backend.app.db")
+        app_db.init_db()
+
+        doc_id = app_db.insert_document("hn.txt", "file", "hn.txt")
+        app_db.insert_chunks(
+            doc_id,
+            [
+                {"content": "banana fruit evidence", "page": 1},
+                {"content": "apple fruit distractor", "page": 2},
+            ],
+        )
+
+        payload = {
+            "k": 2,
+            "parameter_grid": {"candidate_top_k": [2], "use_reranker": [False]},
+            "cases": [
+                {
+                    "id": "hn-case",
+                    "query": "fruit",
+                    "relevant_snippets": ["banana"],
+                    "hard_negative_snippets": ["apple"],
+                }
+            ],
+        }
+
+        with TestClient(app) as client:
+            resp = client.post("/eval/retrieval", json=payload)
+
+        assert resp.status_code == 200
+        metrics = resp.json()["results"][0]["metrics"]
+        assert metrics["hard_negative_hit_rate@k"] == 1.0
+        assert metrics["hard_negative_ratio@k"] == 0.5
+
+
+def test_retrieval_llm_judge_aggregates_extended_scores(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        create_app(tmpdir)
+        app_eval = importlib.import_module("backend.app.retrieval_eval")
+
+        def fake_judge_single_case(
+            query: str,
+            hits: list[dict[str, Any]],
+            expected: dict[str, Any],
+        ) -> dict[str, Any]:
+            return {
+                "relevance": 0.6,
+                "coverage": 0.7,
+                "groundedness": 0.8,
+                "citation_precision": 0.9,
+                "citation_recall": 0.5,
+                "faithfulness": 0.4,
+                "reason": "ok",
+            }
+
+        monkeypatch.setattr(app_eval, "_judge_single_case", fake_judge_single_case)
+
+        judged = app_eval._evaluate_llm_judge(
+            [
+                {
+                    "case_id": "c1",
+                    "query": "q",
+                    "expected": {},
+                    "hits": [],
+                }
+            ],
+            sample_size=1,
+        )
+
+        scores = judged["scores"]
+        assert scores["relevance"] == 0.6
+        assert scores["coverage"] == 0.7
+        assert scores["groundedness"] == 0.8
+        assert scores["citation_precision"] == 0.9
+        assert scores["citation_recall"] == 0.5
+        assert scores["faithfulness"] == 0.4
+        assert round(scores["overall"], 6) == round(
+            (0.6 + 0.7 + 0.8 + 0.9 + 0.5 + 0.4) / 6.0, 6
+        )
+
+
+def test_retrieval_eval_best_config_prefers_lower_hard_negative_ratio():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_db = importlib.import_module("backend.app.db")
+        app_db.init_db()
+
+        doc_id = app_db.insert_document("rank-hn.txt", "file", "rank-hn.txt")
+        app_db.insert_chunks(
+            doc_id,
+            [
+                {"content": "banana fruit and potassium", "page": 1},
+                {"content": "apple fruit and pie", "page": 2},
+            ],
+        )
+
+        payload = {
+            "k": 2,
+            "parameter_grid": {
+                "candidate_top_k": [1, 2],
+                "use_reranker": [False],
+            },
+            "cases": [
+                {
+                    "id": "hn-rank-case",
+                    "query": "banana fruit",
+                    "relevant_snippets": ["banana"],
+                    "hard_negative_snippets": ["apple"],
+                }
+            ],
+        }
+
+        with TestClient(app) as client:
+            resp = client.post("/eval/retrieval", json=payload)
+
+        assert resp.status_code == 200
+        best = resp.json()["best_config"]
+        assert best["config"]["candidate_top_k"] == 1
+        assert best["metrics"]["hard_negative_ratio@k"] == 0.0
 
 
 def test_retrieval_eval_uses_default_benchmark_when_cases_omitted():
@@ -574,6 +971,55 @@ def test_retrieve_endpoint_returns_hits_and_rewrites_for_selected_kb():
             assert any("alpha" in (hit.get("content") or "") for hit in payload["hits"])
 
 
+def test_retrieve_endpoint_deduplicates_duplicate_hits_in_mock_mode():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        app_db = importlib.import_module("backend.app.db")
+        app_db.init_db()
+
+        doc_id = app_db.insert_document("dup.txt", "file", "dup.txt")
+        app_db.insert_chunks(
+            doc_id,
+            [
+                {"content": "apple duplicate chunk", "page": 1},
+                {"content": "apple duplicate chunk", "page": 1},
+                {"content": "apple unique chunk", "page": 2},
+            ],
+        )
+
+        with TestClient(app) as client:
+            resp = client.post(
+                "/retrieve",
+                json={"question": "apple", "kb_id": 1, "top_k": 6},
+            )
+
+        assert resp.status_code == 200
+        hits = resp.json()["hits"]
+        assert len(hits) == 2
+        snippets = [hit["snippet"] for hit in hits]
+        assert len(snippets) == len(set(snippets))
+
+
+def test_retrieval_eval_prefers_specific_snippets_over_broad_source_match():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        create_app(tmpdir)
+        app_eval = importlib.import_module("backend.app.retrieval_eval")
+
+        item = {
+            "id": None,
+            "document_id": 1,
+            "source": "local",
+            "page": 1,
+            "content": "apple only",
+        }
+        case = {
+            "relevant_sources": ["local"],
+            "relevant_snippets": ["banana"],
+        }
+
+        assert app_eval._is_relevant(item, case) is False
+
+
 def test_retrieval_eval_respects_kb_id_scope():
     with tempfile.TemporaryDirectory() as tmpdir:
         app = create_app(tmpdir)
@@ -650,3 +1096,38 @@ def test_generate_retrieval_dataset_without_llm_works_in_mock_mode():
             assert payload["kb_id"] == 1
             assert payload["generated"] > 0
             assert isinstance(payload["cases"], list)
+            assert "hard_negative_snippets" in payload["cases"][0]
+
+
+def test_generate_retrieval_dataset_populates_hard_negatives_when_possible():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        app = create_app(tmpdir)
+        with TestClient(app) as client:
+            docs = {
+                "a.txt": "Banana fruit is yellow and rich in potassium.",
+                "b.txt": "Apple fruit is red and often used in pie.",
+                "c.txt": "Paris is the capital city of France.",
+            }
+            for name, content in docs.items():
+                src = Path(tmpdir) / name
+                src.write_text(content, encoding="utf-8")
+                with open(src, "rb") as f:
+                    ingest = client.post(
+                        "/ingest/file?kb_id=1",
+                        files={"file": (name, f, "text/plain")},
+                    )
+                assert ingest.status_code == 200
+
+            generated = client.post(
+                "/eval/retrieval/generate-dataset",
+                json={"kb_id": 1, "case_count": 3, "use_llm": False},
+            )
+            assert generated.status_code == 200
+
+            payload = generated.json()
+            assert payload["generated"] == 3
+            assert any(
+                case.get("hard_negative_snippets")
+                for case in payload["cases"]
+                if case.get("relevant_snippets")
+            )

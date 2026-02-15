@@ -1,6 +1,6 @@
 # Project Structure
 
-Updated: 2026-02-07
+Updated: 2026-02-15
 
 ## Top-level Layout
 ```text
@@ -11,16 +11,14 @@ Updated: 2026-02-07
 - LICENSE
 - README.md
 - README_EN.md
-- backend
 - docker-compose.yml
 - docs
-- frontend
 - pytest.ini
 - scripts
 - src
 ```
 
 ## Conventions
-- Keep executable/business code under src/ as the long-term target.
+- Keep executable/business code under src/.
 - Keep docs under docs/ (or doc/ for Cangjie projects).
 - Keep local runtime artifacts and secrets out of version control.

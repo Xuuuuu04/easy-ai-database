@@ -5,13 +5,30 @@ from urllib.parse import urlparse
 
 
 def _get_env_path() -> Path:
-    return Path("/Users/xushaoyang/Desktop/ima-simple/.env")
+    env_override = os.getenv("ENV_FILE", "").strip()
+    candidates: list[Path] = []
+
+    if env_override:
+        candidates.append(Path(env_override).expanduser().resolve())
+
+    cwd_env = (Path.cwd() / ".env").resolve()
+    candidates.append(cwd_env)
+
+    repo_env = (Path(__file__).resolve().parents[3] / ".env").resolve()
+    if repo_env not in candidates:
+        candidates.append(repo_env)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
 
 
 def _load_env():
     env_path = _get_env_path()
     if env_path.exists():
-        with open(env_path) as f:
+        with env_path.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -81,10 +98,18 @@ class Settings(BaseModel):
     enable_hybrid_search: bool = True
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
+    retrieval_focus_on_current_question: bool = True
+    retrieval_max_rewrites: int = 2
+    retrieval_enable_quality_gate: bool = True
+    retrieval_min_token_overlap: float = 0.06
+    retrieval_min_rerank_score: float = 0.0
 
     enable_multi_turn: bool = True
     max_chat_history: int = 3
     agent_max_rounds: int = 3
+    agent_prefer_deterministic_followups: bool = True
+    agent_enable_llm_search_fallback: bool = False
+    agent_skip_llm_when_no_evidence: bool = True
 
     max_context_chunks: int = 6
     chunk_size: int = 512
@@ -95,6 +120,10 @@ class Settings(BaseModel):
 
     mock_mode: bool = False
     use_env_proxy: bool = True
+    mcp_protocol_version: str = "2025-11-25"
+    mcp_server_name: str = "ima-simple-mcp"
+    mcp_auth_token: str = ""
+    mcp_enable_legacy_fastapi_mount: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -116,6 +145,12 @@ class Settings(BaseModel):
         self.min_citations = int(os.getenv("MIN_CITATIONS", "1"))
         self.mock_mode = os.getenv("MOCK_MODE", "0") == "1"
         self.use_env_proxy = os.getenv("USE_ENV_PROXY", "1") == "1"
+        self.mcp_protocol_version = os.getenv("MCP_PROTOCOL_VERSION", "2025-11-25")
+        self.mcp_server_name = os.getenv("MCP_SERVER_NAME", "ima-simple-mcp")
+        self.mcp_auth_token = os.getenv("MCP_AUTH_TOKEN", "")
+        self.mcp_enable_legacy_fastapi_mount = (
+            os.getenv("MCP_ENABLE_LEGACY_FASTAPI_MOUNT", "0") == "1"
+        )
 
         self.rerank_base_url = os.getenv("RERANK_BASE_URL", self.llm_base_url)
         self.rerank_api_key = os.getenv("RERANK_API_KEY", self.llm_api_key)
@@ -132,10 +167,32 @@ class Settings(BaseModel):
         self.enable_hybrid_search = os.getenv("ENABLE_HYBRID_SEARCH", "1") == "1"
         self.bm25_weight = float(os.getenv("BM25_WEIGHT", "0.3"))
         self.vector_weight = float(os.getenv("VECTOR_WEIGHT", "0.7"))
+        self.retrieval_focus_on_current_question = (
+            os.getenv("RETRIEVAL_FOCUS_ON_CURRENT_QUESTION", "1") == "1"
+        )
+        self.retrieval_max_rewrites = int(os.getenv("RETRIEVAL_MAX_REWRITES", "2"))
+        self.retrieval_enable_quality_gate = (
+            os.getenv("RETRIEVAL_ENABLE_QUALITY_GATE", "1") == "1"
+        )
+        self.retrieval_min_token_overlap = float(
+            os.getenv("RETRIEVAL_MIN_TOKEN_OVERLAP", "0.06")
+        )
+        self.retrieval_min_rerank_score = float(
+            os.getenv("RETRIEVAL_MIN_RERANK_SCORE", "0.0")
+        )
 
         self.enable_multi_turn = os.getenv("ENABLE_MULTI_TURN", "1") == "1"
         self.max_chat_history = int(os.getenv("MAX_CHAT_HISTORY", "3"))
         self.agent_max_rounds = int(os.getenv("AGENT_MAX_ROUNDS", "3"))
+        self.agent_prefer_deterministic_followups = (
+            os.getenv("AGENT_PREFER_DETERMINISTIC_FOLLOWUPS", "1") == "1"
+        )
+        self.agent_enable_llm_search_fallback = (
+            os.getenv("AGENT_ENABLE_LLM_SEARCH_FALLBACK", "0") == "1"
+        )
+        self.agent_skip_llm_when_no_evidence = (
+            os.getenv("AGENT_SKIP_LLM_WHEN_NO_EVIDENCE", "1") == "1"
+        )
 
 
 settings = Settings()
