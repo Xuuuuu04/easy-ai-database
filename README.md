@@ -44,14 +44,10 @@ cd src/frontend && npm run build
 - 文档：`docs/`
 - 脚本：`scripts/`
 
-详细结构见：`docs/project-structure.md`
-
 ## 文档导航
 
-- 架构总览：`docs/architecture.md`
 - 边界约束：`docs/architecture-boundaries.md`
 - API 参考：`docs/api.md`
-- 运行手册：`docs/runbook.md`
 
 ## 开源协作
 

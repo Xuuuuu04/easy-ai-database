@@ -21,6 +21,11 @@ from .rag import invalidate_rag_cache
 indexes: dict[int, VectorStoreIndex] = {}
 
 
+def invalidate_retrieval_cache(kb_id: int | None = None) -> None:
+    """Invalidate retrieval-side caches without exposing rag module to main."""
+    invalidate_rag_cache(kb_id=kb_id)
+
+
 def kb_index_dir(kb_id: int) -> Path:
     return Path(config.settings.index_dir) / f"kb_{kb_id}"
 

@@ -45,14 +45,10 @@ cd src/frontend && npm run build
 - Docs: `docs/`
 - Scripts: `scripts/`
 
-Detailed layout: `docs/project-structure.md`
-
 ## Documentation
 
-- Architecture: `docs/architecture.md`
 - Architecture boundaries: `docs/architecture-boundaries.md`
 - API reference: `docs/api.md`
-- Runbook: `docs/runbook.md`
 
 ## Open Source Governance
 

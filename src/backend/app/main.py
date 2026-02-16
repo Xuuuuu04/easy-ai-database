@@ -18,16 +18,20 @@ except Exception:
 from .cache import semantic_cache
 from .config import settings
 from .db import init_db
-from .rag import invalidate_rag_cache
 from .routes import chat, eval, kb, mcp, settings as settings_routes
-from .state import drop_kb_index, get_or_create_kb_index, indexes
+from .state import (
+    drop_kb_index,
+    get_or_create_kb_index,
+    indexes,
+    invalidate_retrieval_cache,
+)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     indexes.clear()
     semantic_cache.clear()
-    invalidate_rag_cache()
+    invalidate_retrieval_cache()
     Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
     init_db()
     if not settings.mock_mode:
