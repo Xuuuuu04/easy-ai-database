@@ -1,10 +1,29 @@
+# Environment / local config
+.env
+.env.local
+.env.*.local
+
+# Python
 .venv/
-node_modules/
+venv/
 __pycache__/
 *.pyc
-.env
-data/
-frontend/dist/
+.pytest_cache/
+.ruff_cache/
+
+# Node / frontend build
+node_modules/
+src/frontend/node_modules/
 src/frontend/dist/
+
+# Local runtime data (do not commit)
+data/
+src/data/
+src/backend/data/
 output/
 *.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

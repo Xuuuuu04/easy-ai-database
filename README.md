@@ -1,48 +1,66 @@
 # easy-ai-database
 
-轻量级本地 AI RAG 知识库系统，支持文档/网页导入、RAG 问答、Agent 多步检索、MCP 工具调用。
+轻量级本地 AI RAG 知识库系统，支持文档/网页导入、RAG 问答、Agent 多步检索与 MCP 工具访问。
 
-## 核心特性
-- 本地数据存储：SQLite + FAISS，默认 `./data`
-- 文档导入：PDF / DOCX / TXT + URL 抓取
-- 检索问答：`/chat/rag`、`/chat/agent`、`/retrieve`
-- MCP 协议：`/mcp/v1`，支持外部 AI 工具调用
-- 设置面板：前端直接编辑根目录 `.env`，支持 MCP 开关、部署地址、命令生成
+## 特性
+
+- 本地优先：SQLite + FAISS，默认数据目录 `./data`
+- 导入能力：PDF / DOCX / TXT / URL
+- 问答模式：`/chat/rag`、`/chat/agent`、`/retrieve`
+- MCP 协议：`/mcp/v1`（JSON-RPC + SSE）
+- 前端设置：可直接管理 `.env` 关键配置
 
 ## 快速开始
 
 ### Docker
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
 ### 本地脚本
+
 ```bash
 cp .env.example .env
 ./scripts/run.sh
 ```
 
-前端默认：`http://localhost:5173`  
-后端默认：`http://localhost:8000`
+- 前端默认：`http://localhost:5173`
+- 后端默认：`http://localhost:8000`
 
-## 常用命令
+## 开发命令
+
 ```bash
 python3 -m pytest -q
 cd src/frontend && npm run test
 cd src/frontend && npm run build
 ```
 
-## 目录结构
-- `src/backend/`: FastAPI 后端
-- `src/frontend/`: React 前端
-- `data/`: 本地数据库与索引
-- `docs/`: 架构与运维文档
-- `scripts/`: 开发脚本
+## 项目结构
 
-## MCP 安装
-在 Web 设置面板中填写 `DEPLOYMENT_URL` 并保存后，会自动生成 Claude Code / CodeX 的 MCP 安装命令。
+- 后端：`src/backend/`
+- 前端：`src/frontend/`
+- 文档：`docs/`
+- 脚本：`scripts/`
+
+详细结构见：`docs/project-structure.md`
+
+## 文档导航
+
+- 架构总览：`docs/architecture.md`
+- 边界约束：`docs/architecture-boundaries.md`
+- API 参考：`docs/api.md`
+- 运行手册：`docs/runbook.md`
+
+## 开源协作
+
+- 贡献指南：`CONTRIBUTING.md`
+- 行为准则：`CODE_OF_CONDUCT.md`
+- 安全策略：`SECURITY.md`
+- 变更日志：`CHANGELOG.md`
 
 ## Language
-- 中文: [`README.md`](./README.md)
-- English: [`README_EN.md`](./README_EN.md)
+
+- 中文：`README.md`
+- English：`README_EN.md`

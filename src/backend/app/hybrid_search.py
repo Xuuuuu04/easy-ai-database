@@ -86,7 +86,12 @@ def build_bm25_index(chunks: list[dict[str, Any]]) -> BM25Okapi | None:
     if not chunks:
         return None
 
-    tokenized_corpus = [_tokenize(chunk["content"]) for chunk in chunks]
+    tokenized_corpus = []
+    for chunk in chunks:
+        content = str(chunk.get("content") or "")
+        source = str(chunk.get("source") or "")
+        # Include source path/title tokens so queries containing doc names can be recalled.
+        tokenized_corpus.append(_tokenize(f"{content} {source}"))
     return BM25Okapi(tokenized_corpus)
 
 
@@ -117,6 +122,10 @@ def bm25_search(
     results = []
     for idx in top_indices:
         if scores[idx] > 0:
+            results.append((chunks[idx], float(scores[idx])))
+
+    if not results:
+        for idx in top_indices:
             results.append((chunks[idx], float(scores[idx])))
 
     return results

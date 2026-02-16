@@ -102,10 +102,18 @@ class Settings(BaseModel):
     bm25_weight: float = 0.3
     vector_weight: float = 0.7
     retrieval_focus_on_current_question: bool = True
-    retrieval_max_rewrites: int = 2
+    retrieval_max_rewrites: int = 4
     retrieval_enable_quality_gate: bool = True
     retrieval_min_token_overlap: float = 0.06
     retrieval_min_rerank_score: float = 0.0
+    retrieval_candidate_multiplier: int = 3
+    retrieval_max_chunks_per_source: int = 2
+    retrieval_diversity_penalty: float = 0.28
+    retrieval_source_penalty: float = 0.10
+    retrieval_min_context_score: float = 0.08
+    retrieval_min_anchor_coverage: float = 0.45
+    retrieval_min_focus_coverage: float = 0.34
+    retrieval_max_candidates: int = 180
 
     enable_multi_turn: bool = True
     max_chat_history: int = 3
@@ -177,7 +185,7 @@ class Settings(BaseModel):
         self.retrieval_focus_on_current_question = (
             os.getenv("RETRIEVAL_FOCUS_ON_CURRENT_QUESTION", "1") == "1"
         )
-        self.retrieval_max_rewrites = int(os.getenv("RETRIEVAL_MAX_REWRITES", "2"))
+        self.retrieval_max_rewrites = int(os.getenv("RETRIEVAL_MAX_REWRITES", "4"))
         self.retrieval_enable_quality_gate = (
             os.getenv("RETRIEVAL_ENABLE_QUALITY_GATE", "1") == "1"
         )
@@ -186,6 +194,30 @@ class Settings(BaseModel):
         )
         self.retrieval_min_rerank_score = float(
             os.getenv("RETRIEVAL_MIN_RERANK_SCORE", "0.0")
+        )
+        self.retrieval_candidate_multiplier = int(
+            os.getenv("RETRIEVAL_CANDIDATE_MULTIPLIER", "3")
+        )
+        self.retrieval_max_chunks_per_source = int(
+            os.getenv("RETRIEVAL_MAX_CHUNKS_PER_SOURCE", "2")
+        )
+        self.retrieval_diversity_penalty = float(
+            os.getenv("RETRIEVAL_DIVERSITY_PENALTY", "0.28")
+        )
+        self.retrieval_source_penalty = float(
+            os.getenv("RETRIEVAL_SOURCE_PENALTY", "0.10")
+        )
+        self.retrieval_min_context_score = float(
+            os.getenv("RETRIEVAL_MIN_CONTEXT_SCORE", "0.08")
+        )
+        self.retrieval_min_anchor_coverage = float(
+            os.getenv("RETRIEVAL_MIN_ANCHOR_COVERAGE", "0.45")
+        )
+        self.retrieval_min_focus_coverage = float(
+            os.getenv("RETRIEVAL_MIN_FOCUS_COVERAGE", "0.34")
+        )
+        self.retrieval_max_candidates = int(
+            os.getenv("RETRIEVAL_MAX_CANDIDATES", "180")
         )
 
         self.enable_multi_turn = os.getenv("ENABLE_MULTI_TURN", "1") == "1"
@@ -202,7 +234,14 @@ class Settings(BaseModel):
         )
 
 
-settings = Settings()
+_existing_settings = globals().get("settings")
+_refreshed_settings = Settings()
+if isinstance(_existing_settings, BaseModel):
+    for field_name, field_value in _refreshed_settings.model_dump().items():
+        setattr(_existing_settings, field_name, field_value)
+    settings = _existing_settings
+else:
+    settings = _refreshed_settings
 
 
 def get_env_path() -> Path:

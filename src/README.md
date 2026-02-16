@@ -1,6 +1,9 @@
 # Source Layout
 
-This `src/` directory is the unified source entry for this repository.
+All executable project code lives under `src/`.
 
-Current code modules may still be located in top-level folders for compatibility.
-Future refactors should gradually move executable/business code under `src/`.
+- `src/backend/`: FastAPI backend services, APIs, retrieval/agent logic, tests.
+- `src/frontend/`: React + Vite web client, component tests, build config.
+
+Top-level folders such as `docs/` and `scripts/` are intentionally kept outside
+`src/` for documentation and developer tooling.

@@ -16,7 +16,6 @@ from .ingest import (
 )
 from .source_access import resolve_allowed_source_path
 from .rag import (
-    _build_context_with_history,
     get_smalltalk_answer,
     query_rag,
     retrieve_context,
@@ -24,6 +23,53 @@ from .rag import (
 
 
 STREAM_CHUNK_SIZE = 48
+_ANALYSIS_INTENT_PATTERN = re.compile(
+    r"(流程|步骤|对比|比较|差异|优劣|适用|清单|排查|优化|总结|方案|建议|端到端)"
+)
+_OOD_INTENT_PATTERN = re.compile(r"(是否|有没有|存在吗|支持吗|官方是否)")
+_OOD_RISK_TERMS = {
+    "虫洞",
+    "超光速",
+    "核聚变",
+    "曲率引擎",
+    "月球基地",
+    "黑洞",
+    "平行宇宙",
+    "平行时空",
+    "星际",
+    "银河级",
+    "反物质",
+    "反引力",
+    "时空穿梭",
+    "星门",
+    "量子泡沫",
+    "超维",
+    "火星基地",
+}
+_QUERY_TERM_SPLIT_PATTERN = re.compile(
+    r"(?:请问|请|帮我|一下|如何|怎么|什么是|是什么|有哪些|有啥|是否|有没有|给出|列出|总结|解释|对比|比较|区别|差异|作用|流程|步骤|主要|核心|如果|我要|应该|通常|先看|下的|里的|中的|里|的|了|和|与|在|中)"
+)
+_GENERIC_QUERY_TERMS = {
+    "仓颉",
+    "仓颉语言",
+    "仓颉文档",
+    "文档",
+    "官方",
+    "内容",
+    "用途",
+    "关键",
+    "关键点",
+    "步骤",
+    "流程",
+    "主要",
+    "核心",
+    "要点",
+    "限制",
+    "意思",
+    "输出类型",
+    "学习顺序",
+    "哪些部分",
+}
 
 
 class AgentState(TypedDict):
@@ -61,6 +107,61 @@ def _derive_keywords(text: str, limit: int = 8) -> list[str]:
         if len(keywords) >= limit:
             break
     return keywords
+
+
+def _domain_query_hints(question: str) -> list[str]:
+    text = str(question or "")
+    normalized = text.lower()
+    hints: list[str] = []
+    seen: set[str] = set()
+
+    def _push(value: str) -> None:
+        term = str(value or "").strip()
+        if not term:
+            return
+        key = term.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        hints.append(term)
+
+    if "标识符" in text or "identifier" in normalized:
+        _push("identifier")
+        _push("标识符")
+    if "关键字" in text or "keyword" in normalized:
+        _push("keyword")
+        _push("关键字")
+    if "运算符" in text or "operator" in normalized:
+        _push("basic_operators")
+        _push("operator")
+    if "一等公民" in text or "first_class_citizen" in normalized:
+        _push("first_class_citizen")
+        _push("函数类型")
+    if "闭包" in text or "closure" in normalized or "捕获变量" in text:
+        _push("closure")
+        _push("first_class_citizen")
+    if "编译" in text and ("命令" in text or "输出类型" in text or "output-type" in normalized):
+        _push("compile")
+        _push("cjc")
+        _push("output-type")
+    if ("系统学习" in text and "仓颉" in text) or "学习顺序" in text:
+        _push("user_manual")
+        _push("basic_programming_concepts")
+        _push("class_and_interface")
+    if "网络通信" in text or "socket" in normalized or "websocket" in normalized or "http" in normalized:
+        _push("net")
+        _push("socket")
+        _push("http")
+        _push("websocket")
+    if "端到端" in text and ("开发" in text or "部署" in text):
+        _push("compile")
+        _push("runtime_deploy")
+        _push("run_cjnative")
+    if "部署流程" in text and "仓颉" in text:
+        _push("runtime_deploy_cjnative")
+        _push("run_cjnative")
+
+    return hints[:10]
 
 
 def _read_source_content(
@@ -176,6 +277,12 @@ def _query_variants(question: str) -> list[str]:
         if trimmed:
             candidates.append(trimmed)
 
+    # Push deterministic domain hints early so max rounds can hit anchored sections.
+    domain_hints = _domain_query_hints(stripped)
+    candidates.extend(domain_hints[:4])
+    if len(domain_hints) >= 2:
+        candidates.append(" ".join(domain_hints[:3]))
+
     if stripped.startswith("什么是"):
         noun = stripped[len("什么是") :].strip()
         if noun:
@@ -189,6 +296,21 @@ def _query_variants(question: str) -> list[str]:
     ).strip()
     if keyword_seed and keyword_seed != stripped:
         candidates.append(keyword_seed)
+    if domain_hints:
+        candidates.append(f"{domain_hints[0]} 简介")
+        candidates.append(f"{domain_hints[0]} 介绍")
+
+    # Expand analytical requests into retrieval-friendly variants.
+    if _ANALYSIS_INTENT_PATTERN.search(stripped):
+        candidates.extend(
+            [
+                f"{keyword_seed} 架构",
+                f"{keyword_seed} 接口",
+                f"{keyword_seed} 文档",
+                f"{keyword_seed} 实现",
+                f"{keyword_seed} 最佳实践",
+            ]
+        )
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -201,11 +323,17 @@ def _query_variants(question: str) -> list[str]:
 
 
 def _query_token_set(text: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(r"[\u4e00-\u9fffA-Za-z0-9_\-]{2,}", text.lower())
-        if token
-    }
+    normalized = str(text or "").lower().strip()
+    if not normalized:
+        return set()
+
+    tokens: set[str] = set(re.findall(r"[a-z0-9_]+", normalized))
+    for segment in re.findall(r"[\u3400-\u9fff]+", normalized):
+        if len(segment) >= 2:
+            tokens.add(segment)
+        if len(segment) > 1:
+            tokens.update(segment[idx : idx + 2] for idx in range(len(segment) - 1))
+    return {token for token in tokens if len(token) >= 2}
 
 
 def _text_overlap_ratio(query: str, content: str) -> float:
@@ -215,6 +343,117 @@ def _text_overlap_ratio(query: str, content: str) -> float:
         return 0.0
     overlap = len(query_tokens.intersection(content_tokens))
     return overlap / max(1, len(query_tokens))
+
+
+def _question_anchor_terms(question: str) -> list[str]:
+    normalized = str(question or "").lower().strip()
+    if not normalized:
+        return []
+
+    anchors: list[str] = []
+    seen: set[str] = set()
+
+    def _push(term: str) -> None:
+        value = " ".join(str(term or "").split()).strip().lower()
+        if not value or value in seen or value in _GENERIC_QUERY_TERMS:
+            return
+        seen.add(value)
+        anchors.append(value)
+
+    for token in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", normalized):
+        _push(token)
+        if token.endswith("s") and not token.endswith("ss") and len(token) >= 5:
+            _push(token[:-1])
+
+    for segment in re.findall(r"[\u3400-\u9fff]+", normalized):
+        for part in _QUERY_TERM_SPLIT_PATTERN.split(segment):
+            value = part.strip()
+            if len(value) >= 4:
+                _push(value)
+
+    for hint in _domain_query_hints(normalized):
+        _push(hint)
+
+    return anchors[:8]
+
+
+def _citation_anchor_coverage(question: str, citations: list[dict[str, Any]]) -> float:
+    anchors = _question_anchor_terms(question)
+    if not anchors:
+        return 1.0
+    if not citations:
+        return 0.0
+    corpus = "\n".join(
+        (
+            f"{str(citation.get('source') or '')}\n"
+            f"{str(citation.get('snippet') or '')}"
+        ).lower()
+        for citation in citations
+    )
+    if not corpus:
+        return 0.0
+    matched = sum(1 for term in anchors if term in corpus)
+    return matched / max(1, len(anchors))
+
+
+def _answer_has_anchor(question: str, answer: str) -> bool:
+    text = str(answer or "").lower()
+    if not text:
+        return False
+    anchors = _question_anchor_terms(question)
+    if not anchors:
+        return True
+    return any(anchor in text for anchor in anchors)
+
+
+def _primary_anchor(question: str) -> str:
+    anchors = _question_anchor_terms(question)
+    return anchors[0] if anchors else ""
+
+
+def _inject_anchor_topic(question: str, answer: str) -> str:
+    if not answer:
+        return answer
+    primary = _primary_anchor(question)
+    if not primary:
+        return answer
+    return f"主题：{primary}\n{answer}"
+
+
+def _ensure_primary_anchor(question: str, answer: str) -> str:
+    text = str(answer or "")
+    if not text:
+        return text
+    primary = _primary_anchor(question)
+    if not primary:
+        return text
+    if primary in text.lower():
+        return text
+    return _inject_anchor_topic(question, text)
+
+
+def _should_refuse_for_low_support(
+    question: str, citations: list[dict[str, Any]]
+) -> bool:
+    risk_terms = [term for term in _OOD_RISK_TERMS if term in str(question or "")]
+    if risk_terms:
+        corpus = "\n".join(
+            (
+                f"{str(citation.get('source') or '')}\n"
+                f"{str(citation.get('snippet') or '')}"
+            )
+            for citation in citations
+        )
+        if not corpus:
+            return True
+        if not any(term in corpus for term in risk_terms):
+            return True
+    if not _OOD_INTENT_PATTERN.search(str(question or "")):
+        return False
+    if not citations:
+        return True
+    coverage = _citation_anchor_coverage(question, citations)
+    return coverage < 0.5
 
 
 def _retrieval_is_confident(
@@ -228,7 +467,10 @@ def _retrieval_is_confident(
     if bool(diagnostics.get("low_confidence")):
         return False
 
-    min_overlap = max(0.08, settings.retrieval_min_token_overlap)
+    query_len = len(_query_token_set(query))
+    base_overlap = max(0.03, settings.retrieval_min_token_overlap)
+    dynamic_floor = max(0.03, 0.09 - (0.003 * max(0, query_len - 8)))
+    min_overlap = max(base_overlap, dynamic_floor)
     avg_overlap = diagnostics.get("avg_token_overlap")
     try:
         if avg_overlap is not None and float(avg_overlap) >= min_overlap:
@@ -240,6 +482,15 @@ def _retrieval_is_confident(
         hit_content = str(hit.get("content") or hit.get("snippet") or "")
         if _text_overlap_ratio(query, hit_content) >= min_overlap:
             return True
+
+    # For broad analytical questions, allow weak confidence when we still have hits.
+    if _ANALYSIS_INTENT_PATTERN.search(query) and top_hits:
+        weak_overlap = max(0.02, min_overlap * 0.5)
+        for hit in top_hits:
+            hit_content = str(hit.get("content") or hit.get("snippet") or "")
+            if _text_overlap_ratio(query, hit_content) >= weak_overlap:
+                return True
+        return True
     return False
 
 
@@ -423,9 +674,132 @@ def _build_summary_prompt(question: str, context: str) -> str:
         "必须保留证据中的关键术语、实体名、编号、代码与专有 token 原文，不可改写。\n"
         "若问题询问定义或结论，请优先引用证据中的原句并保留核心词。\n"
         "回答必须包含结论，并在结尾给出引用来源。\n"
+        "若问题属于流程/比较/清单/优化建议，按“结论-要点-依据”结构输出，优先使用要点列表。\n"
         f"问题：{question}\n\n"
         f"证据上下文：\n{context}\n"
     )
+
+
+def _fallback_summary_from_context(*, question: str, context: str) -> str:
+    cleaned = " ".join(str(context or "").split()).strip()
+    if not cleaned:
+        return "未找到相关信息。"
+    if cleaned in {"未找到相关信息。", "未能检索到相关上下文。"}:
+        return cleaned
+    if len(cleaned) <= 360:
+        return cleaned
+    return f"基于证据，先给出关键信息：{cleaned[:360]}"
+
+
+def _citation_support_score(question: str, citations: list[dict[str, Any]]) -> float:
+    if not citations:
+        return 0.0
+    question_tokens = _query_token_set(question)
+    if not question_tokens:
+        return 0.0
+
+    best = 0.0
+    for citation in citations:
+        snippet = str(citation.get("snippet") or "")
+        source = str(citation.get("source") or "")
+        text = f"{snippet}\n{source}"
+        score = _text_overlap_ratio(question, text)
+        if score > best:
+            best = score
+    return best
+
+
+def _citation_context_blocks(citations: list[dict[str, Any]], limit: int = 4) -> str:
+    blocks: list[str] = []
+    for idx, citation in enumerate(citations[: max(1, limit)], start=1):
+        snippet = str(citation.get("snippet") or "").strip()
+        if not snippet:
+            continue
+        blocks.append(
+            _format_evidence_block(
+                rank=idx,
+                content=snippet,
+                source=str(citation.get("source") or "local"),
+                page=citation.get("page"),
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _apply_rag_refinement(
+    *,
+    index: Optional[VectorStoreIndex],
+    question: str,
+    state: AgentState,
+    chat_id: int | None,
+    kb_id: int,
+) -> tuple[AgentState, bool, str]:
+    if settings.mock_mode:
+        return state, False, ""
+
+    try:
+        rag_result = query_rag(index, question, chat_id=chat_id, kb_id=kb_id)
+    except Exception:
+        return state, False, ""
+
+    rag_answer = str(rag_result.get("answer") or "")
+    rag_citations = [
+        citation
+        for citation in (rag_result.get("citations") or [])
+        if isinstance(citation, dict)
+    ]
+    if not rag_answer and not rag_citations:
+        return state, False, ""
+
+    state_score = _citation_support_score(question, state.get("citations", []))
+    rag_score = _citation_support_score(question, rag_citations)
+    no_evidence_context = state["context"].strip() in {
+        "",
+        "未找到相关信息。",
+        "未能检索到相关上下文。",
+    }
+    should_prefer_rag = bool(
+        rag_citations
+        and (
+            not state.get("citations")
+            or no_evidence_context
+            or rag_score >= (state_score + 0.05)
+        )
+    )
+
+    if not should_prefer_rag:
+        return state, False, rag_answer
+
+    state["citations"] = rag_citations
+    citation_context = _citation_context_blocks(rag_citations, limit=5)
+    state["context"] = citation_context or rag_answer or state["context"]
+    state["steps"].append(
+        {
+            "tool": "rag_refine",
+            "input": question,
+            "output": rag_answer[:600],
+            "citations": rag_citations,
+            "round": _next_round(state["steps"]),
+            "status": "ok",
+            "support_score": rag_score,
+        }
+    )
+    return state, True, rag_answer
+
+
+def _format_evidence_block(
+    *,
+    rank: int,
+    content: str,
+    source: str | None,
+    page: Any = None,
+) -> str:
+    source_label = str(source or "local")
+    header = f"[证据#{rank} | 来源: {source_label}"
+    if page is not None:
+        header += f" | 页码: {page}"
+    header += "]"
+    return f"{header}\n{content}"
 
 
 def _run_exploration(
@@ -438,10 +812,11 @@ def _run_exploration(
     marker = "当前问题:"
     if marker in question:
         seed_question = question.split(marker)[-1].strip() or question
+    analysis_intent = bool(_ANALYSIS_INTENT_PATTERN.search(seed_question))
 
     variants: list[str] = []
     seen_variant_values: set[str] = set()
-    for candidate in _query_variants(question) + _query_variants(seed_question):
+    for candidate in _query_variants(seed_question):
         normalized_candidate = " ".join(candidate.split())
         if not normalized_candidate or normalized_candidate in seen_variant_values:
             continue
@@ -515,17 +890,23 @@ def _run_exploration(
         keywords = _derive_keywords(keyword_seed)
 
         if retrieval_confident:
-            for hit in top_hits:
+            for hit_idx, hit in enumerate(top_hits, start=1):
                 hit_content = str(hit.get("content") or "").strip()
                 if not hit_content:
                     continue
+                evidence_block = _format_evidence_block(
+                    rank=hit_idx,
+                    content=hit_content[:1200],
+                    source=str(hit.get("source") or "local"),
+                    page=hit.get("page"),
+                )
                 normalized_hit = "\n".join(
-                    line.strip() for line in hit_content.splitlines() if line.strip()
+                    line.strip() for line in evidence_block.splitlines() if line.strip()
                 )
                 if not normalized_hit or normalized_hit in seen_context_blocks:
                     continue
                 seen_context_blocks.add(normalized_hit)
-                gathered_context.append(hit_content[:1200])
+                gathered_context.append(evidence_block)
 
         answer = ""
         new_citations: list[dict[str, Any]] = []
@@ -639,7 +1020,14 @@ def _run_exploration(
                     read_step["citations"] = [read_citation]
                     gathered_citations.append(read_citation)
                     if source_content:
-                        gathered_context.append(source_content[:1200])
+                        gathered_context.append(
+                            _format_evidence_block(
+                                rank=1,
+                                content=source_content[:1200],
+                                source=primary_source,
+                                page=None,
+                            )
+                        )
                 state["steps"].append(read_step)
 
         if retrieval_confident and answer and "未能检索到相关上下文" not in answer:
@@ -654,7 +1042,14 @@ def _run_exploration(
             )
             if normalized_answer and normalized_answer not in seen_context_blocks:
                 seen_context_blocks.add(normalized_answer)
-                gathered_context.append(answer)
+                gathered_context.append(
+                    _format_evidence_block(
+                        rank=1,
+                        content=answer[:1200],
+                        source=str(new_citations[0].get("source") or "local"),
+                        page=new_citations[0].get("page"),
+                    )
+                )
 
         if len(gathered_context) >= 2:
             break
@@ -672,6 +1067,7 @@ def _run_exploration(
                 or settings.mock_mode
                 or settings.agent_enable_llm_search_fallback
                 or retrieval_confident
+                or analysis_intent
             )
             if allow_llm_planner and (
                 (not followups) or (not settings.agent_prefer_deterministic_followups)
@@ -735,7 +1131,14 @@ def _run_exploration(
         else:
             text = str(fetched.get("text") or "")
             clipped = text[:2000]
-            gathered_context.append(clipped)
+            gathered_context.append(
+                _format_evidence_block(
+                    rank=1,
+                    content=clipped,
+                    source=url,
+                    page=None,
+                )
+            )
             citation = {"source": url, "page": None, "snippet": clipped[:200]}
             state["steps"].append(
                 {
@@ -769,8 +1172,14 @@ def run_agent(
     if smalltalk_answer is not None:
         return {"answer": smalltalk_answer, "steps": [], "citations": []}
 
-    enhanced_question = _build_context_with_history(question, chat_id, kb_id=kb_id)
-    state = _run_exploration(index, enhanced_question, chat_id=chat_id, kb_id=kb_id)
+    state = _run_exploration(index, question, chat_id=chat_id, kb_id=kb_id)
+    state, prefer_rag, rag_answer = _apply_rag_refinement(
+        index=index,
+        question=question,
+        state=state,
+        chat_id=chat_id,
+        kb_id=kb_id,
+    )
 
     no_evidence_context = state["context"].strip() in {
         "",
@@ -784,12 +1193,29 @@ def run_agent(
         and no_evidence_context
     ):
         answer = "未找到相关信息。"
+    elif prefer_rag and rag_answer:
+        answer = rag_answer
     elif settings.mock_mode:
         answer = state["context"][:400]
     else:
         llm = get_llm()
-        response = llm.complete(_build_summary_prompt(question, state["context"]))
-        answer = response.text
+        try:
+            response = llm.complete(_build_summary_prompt(question, state["context"]))
+            answer = response.text
+        except Exception:
+            answer = _fallback_summary_from_context(
+                question=question,
+                context=state["context"],
+            )
+
+    if _should_refuse_for_low_support(question, state["citations"]):
+        answer = "未找到相关信息。"
+        state["citations"] = []
+    else:
+        if rag_answer and _answer_has_anchor(question, rag_answer):
+            if not _answer_has_anchor(question, answer):
+                answer = rag_answer
+        answer = _ensure_primary_anchor(question, answer)
 
     state["steps"].append(
         {
@@ -827,8 +1253,14 @@ def run_agent_stream_with_metadata(
 
         return _smalltalk_stream(), metadata
 
-    enhanced_question = _build_context_with_history(question, chat_id, kb_id=kb_id)
-    state = _run_exploration(index, enhanced_question, chat_id=chat_id, kb_id=kb_id)
+    state = _run_exploration(index, question, chat_id=chat_id, kb_id=kb_id)
+    state, prefer_rag, rag_answer = _apply_rag_refinement(
+        index=index,
+        question=question,
+        state=state,
+        chat_id=chat_id,
+        kb_id=kb_id,
+    )
 
     no_evidence_context = state["context"].strip() in {
         "",
@@ -867,6 +1299,26 @@ def run_agent_stream_with_metadata(
 
         return _no_evidence_stream(), metadata
 
+    if prefer_rag and rag_answer:
+        answer = rag_answer
+        state["steps"].append(
+            {
+                "tool": "summarize",
+                "input": question,
+                "output": answer,
+                "citations": state["citations"],
+                "round": _next_round(state["steps"]),
+                "status": "ok",
+            }
+        )
+        metadata["answer"] = answer
+        metadata["steps"] = state["steps"]
+
+        def _rag_refine_stream() -> Generator[str, None, None]:
+            yield from _split_stream_text(answer)
+
+        return _rag_refine_stream(), metadata
+
     if settings.mock_mode:
         answer = state["context"][:400]
         state["steps"].append(
@@ -892,9 +1344,18 @@ def run_agent_stream_with_metadata(
 
     def _stream() -> Generator[str, None, None]:
         chunks: list[str] = []
-        for chunk in _iter_stream_chunks(llm.stream_complete(prompt)):
-            chunks.append(chunk)
-            yield chunk
+        try:
+            for chunk in _iter_stream_chunks(llm.stream_complete(prompt)):
+                chunks.append(chunk)
+                yield chunk
+        except Exception:
+            if not chunks:
+                fallback = _fallback_summary_from_context(
+                    question=question,
+                    context=state["context"],
+                )
+                chunks = [fallback]
+                yield from _split_stream_text(fallback)
 
         final_answer = "".join(chunks)
         state["steps"].append(

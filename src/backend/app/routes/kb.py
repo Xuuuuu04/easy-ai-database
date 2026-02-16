@@ -178,10 +178,6 @@ async def ingest_file(
     docs = build_documents_from_file(dest, str(dest))
     nodes = split_into_chunks(docs)
 
-    kb_index = get_or_create_kb_index(kb_id)
-    if not config.settings.mock_mode and kb_index is not None:
-        insert_nodes(kb_index, nodes, index_dir=kb_index_dir(kb_id))
-
     insert_chunks(
         doc_id,
         [
@@ -195,9 +191,25 @@ async def ingest_file(
         ],
     )
 
+    vector_indexed = False
+    vector_error: str | None = None
+    kb_index = get_or_create_kb_index(kb_id)
+    if not config.settings.mock_mode and kb_index is not None:
+        try:
+            insert_nodes(kb_index, nodes, index_dir=kb_index_dir(kb_id))
+            vector_indexed = True
+        except Exception as exc:
+            vector_error = str(exc)
+
     invalidate_rag_cache(kb_id=kb_id)
 
-    return {"document_id": doc_id, "chunks": len(nodes), "kb_id": kb_id}
+    return {
+        "document_id": doc_id,
+        "chunks": len(nodes),
+        "kb_id": kb_id,
+        "vector_indexed": vector_indexed,
+        "vector_error": vector_error,
+    }
 
 
 @router.post("/ingest/url")
@@ -208,10 +220,6 @@ def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
     doc_id = insert_document(req.url, "url", req.url, kb_id=req.kb_id)
     docs = build_documents_from_url(req.url)
     nodes = split_into_chunks(docs)
-
-    kb_index = get_or_create_kb_index(req.kb_id)
-    if not config.settings.mock_mode and kb_index is not None:
-        insert_nodes(kb_index, nodes, index_dir=kb_index_dir(req.kb_id))
 
     insert_chunks(
         doc_id,
@@ -226,9 +234,25 @@ def ingest_url(req: UrlIngestRequest) -> dict[str, Any]:
         ],
     )
 
+    vector_indexed = False
+    vector_error: str | None = None
+    kb_index = get_or_create_kb_index(req.kb_id)
+    if not config.settings.mock_mode and kb_index is not None:
+        try:
+            insert_nodes(kb_index, nodes, index_dir=kb_index_dir(req.kb_id))
+            vector_indexed = True
+        except Exception as exc:
+            vector_error = str(exc)
+
     invalidate_rag_cache(kb_id=req.kb_id)
 
-    return {"document_id": doc_id, "chunks": len(nodes), "kb_id": req.kb_id}
+    return {
+        "document_id": doc_id,
+        "chunks": len(nodes),
+        "kb_id": req.kb_id,
+        "vector_indexed": vector_indexed,
+        "vector_error": vector_error,
+    }
 
 
 @router.get("/kb/documents")

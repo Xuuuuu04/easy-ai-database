@@ -1,0 +1,252 @@
+{
+  "documents": [
+    {
+      "filename": "architecture/kb_overview.md",
+      "content": "RAG_STAGE_INGEST ingest\nRAG_STAGE_RETRIEVE retrieve\nRAG_STAGE_RERANK rerank\nRAG_STAGE_ANSWER answer\n"
+    },
+    {
+      "filename": "architecture/agent_workflow.txt",
+      "content": "AGENT_TOOL_SEQUENCE search_kb -> read_source -> summarize\nAGENT_MAX_ROUNDS_DEFAULT 3\nAGENT_SUMMARY_STRATEGY grounded\n"
+    },
+    {
+      "filename": "ops/deployment.yaml",
+      "content": "backend_port: 8000\nfrontend_port: 5173\nhealth_path: /health\n"
+    },
+    {
+      "filename": "ops/mcp_security.json",
+      "content": "{\n  \"mcp_endpoint\": \"/mcp/v1\",\n  \"auth_header\": \"Authorization: Bearer <token>\",\n  \"protocol_version\": \"2025-11-25\"\n}\n"
+    },
+    {
+      "filename": "ops/cache_policy.csv",
+      "content": "key,value\nCACHE_TTL_HOURS,24\nCACHE_SIMILARITY_THRESHOLD,0.95\nENABLE_SEMANTIC_CACHE,1\n"
+    },
+    {
+      "filename": "ops/retrieval_tuning.py",
+      "content": "RERANK_TOP_K = 10\nBM25_WEIGHT = 0.3\nVECTOR_WEIGHT = 0.7\nRETRIEVAL_MAX_REWRITES = 2\n"
+    },
+    {
+      "filename": "ops/multilingual.md",
+      "content": "TERM_VECTOR_RETRIEVAL vector retrieval\nTERM_CITATION_GUARD insufficient citations refusal\n"
+    },
+    {
+      "filename": "ops/troubleshooting.txt",
+      "content": "NO_CONTEXT_MESSAGE 未能检索到相关上下文。\nMOCK_MODE_FLAG MOCK_MODE=1\n"
+    }
+  ],
+  "rag_cases": [
+    {
+      "id": "rag_ingest_stage",
+      "question": "RAG_STAGE_INGEST",
+      "expect_any": [
+        "RAG_STAGE_INGEST"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_retrieve_stage",
+      "question": "RAG_STAGE_RETRIEVE",
+      "expect_any": [
+        "RAG_STAGE_RETRIEVE"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_agent_tool_sequence",
+      "question": "AGENT_TOOL_SEQUENCE",
+      "expect_any": [
+        "AGENT_TOOL_SEQUENCE"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_backend_port",
+      "question": "backend_port",
+      "expect_any": [
+        "backend_port"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_frontend_port",
+      "question": "frontend_port",
+      "expect_any": [
+        "frontend_port"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_mcp_endpoint",
+      "question": "mcp_endpoint",
+      "expect_any": [
+        "mcp_endpoint"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_auth_header",
+      "question": "auth_header",
+      "expect_any": [
+        "auth_header"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_cache_ttl",
+      "question": "CACHE_TTL_HOURS",
+      "expect_any": [
+        "CACHE_TTL_HOURS"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_rerank_topk",
+      "question": "RERANK_TOP_K",
+      "expect_any": [
+        "RERANK_TOP_K"
+      ],
+      "min_citations": 1
+    },
+    {
+      "id": "rag_multilingual_term",
+      "question": "TERM_VECTOR_RETRIEVAL",
+      "expect_any": [
+        "TERM_VECTOR_RETRIEVAL"
+      ],
+      "min_citations": 1
+    }
+  ],
+  "agent_cases": [
+    {
+      "id": "agent_ingest_stage",
+      "question": "RAG_STAGE_INGEST",
+      "expect_any": [
+        "RAG_STAGE_INGEST"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_sequence",
+      "question": "AGENT_TOOL_SEQUENCE",
+      "expect_any": [
+        "AGENT_TOOL_SEQUENCE"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_backend_port",
+      "question": "backend_port",
+      "expect_any": [
+        "backend_port"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_mcp_endpoint",
+      "question": "mcp_endpoint",
+      "expect_any": [
+        "mcp_endpoint"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_cache_similarity",
+      "question": "CACHE_SIMILARITY_THRESHOLD",
+      "expect_any": [
+        "CACHE_SIMILARITY_THRESHOLD"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_retrieval_rewrites",
+      "question": "RETRIEVAL_MAX_REWRITES",
+      "expect_any": [
+        "RETRIEVAL_MAX_REWRITES"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_mock_flag",
+      "question": "MOCK_MODE_FLAG",
+      "expect_any": [
+        "MOCK_MODE_FLAG"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    },
+    {
+      "id": "agent_multilingual_guard",
+      "question": "TERM_CITATION_GUARD",
+      "expect_any": [
+        "TERM_CITATION_GUARD"
+      ],
+      "min_citations": 1,
+      "min_steps": 2
+    }
+  ],
+  "retrieve_cases": [
+    {
+      "id": "retrieve_health_path",
+      "question": "health_path",
+      "expect_hit_contains": "health_path"
+    },
+    {
+      "id": "retrieve_bm25_weight",
+      "question": "BM25_WEIGHT",
+      "expect_hit_contains": "BM25_WEIGHT"
+    },
+    {
+      "id": "retrieve_protocol_version",
+      "question": "protocol_version",
+      "expect_hit_contains": "protocol_version"
+    },
+    {
+      "id": "retrieve_no_context_message",
+      "question": "NO_CONTEXT_MESSAGE",
+      "expect_hit_contains": "NO_CONTEXT_MESSAGE"
+    }
+  ],
+  "stream_cases": [
+    {
+      "id": "stream_rag_auth_header",
+      "mode": "rag",
+      "question": "auth_header",
+      "expect_any": [
+        "auth_header"
+      ]
+    },
+    {
+      "id": "stream_rag_cache_ttl",
+      "mode": "rag",
+      "question": "CACHE_TTL_HOURS",
+      "expect_any": [
+        "CACHE_TTL_HOURS"
+      ]
+    },
+    {
+      "id": "stream_agent_sequence",
+      "mode": "agent",
+      "question": "AGENT_TOOL_SEQUENCE",
+      "expect_any": [
+        "AGENT_TOOL_SEQUENCE"
+      ]
+    },
+    {
+      "id": "stream_agent_endpoint",
+      "mode": "agent",
+      "question": "mcp_endpoint",
+      "expect_any": [
+        "mcp_endpoint"
+      ]
+    }
+  ],
+  "multi_turn_case": {
+    "first_question": "RAG_STAGE_INGEST",
+    "second_question": "AGENT_TOOL_SEQUENCE"
+  }
+}

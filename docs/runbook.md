@@ -1,19 +1,31 @@
-# 运行与排错
+# Runbook
 
-## 启动检查
-- 后端健康检查：`GET /health`
-- 前端访问：`http://localhost:5173`
+## Startup Checks
 
-## 常见问题
-1. **模型不可用**
-   - 检查 `.env` 的 `LLM_BASE_URL`/`EMBED_BASE_URL`
-   - 确认本地模型服务已启动
+- Backend health: `GET /health`
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
 
-2. **无引用拒答**
-   - 默认需要至少 1 条引用；可通过 `REQUIRE_CITATIONS=0` 关闭
+## Common Issues
 
-3. **索引异常**
-   - 删除 `./data/index` 重新导入
+1. Model endpoint unavailable
+   - Verify `.env` values for `LLM_BASE_URL` / `EMBED_BASE_URL`.
+   - Confirm local model service is running.
+2. Answer rejected due to missing citations
+   - Citation guard is enabled by default.
+   - For debugging only, set `REQUIRE_CITATIONS=0`.
+3. Retrieval/index corruption
+   - Stop services.
+   - Remove local index directory (`./data/index` or configured `INDEX_DIR`).
+   - Re-ingest documents.
 
-## 测试模式
-- `MOCK_MODE=1`：跳过向量与模型调用，使用简单关键词检索
+## Test/Debug Modes
+
+- `MOCK_MODE=1`: skip vector/model calls and use lexical fallback.
+- Retrieval diagnostics endpoint: `POST /retrieve`.
+
+## Local Cleanup (safe to regenerate)
+
+- Frontend build/cache: `src/frontend/dist`, `src/frontend/node_modules`
+- Python cache: `.pytest_cache`, `.ruff_cache`, `__pycache__`
+- Evaluation artifacts: `output/`
