@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Generator
+import asyncio
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 @router.get("/mcp/v1")
-def mcp_stream(request: Request) -> Response:
+async def mcp_stream(request: Request) -> Response:
     if not settings.mcp_tools_enabled:
         return JSONResponse(
             {"detail": "MCP tools are disabled by server settings"},
@@ -23,8 +23,15 @@ def mcp_stream(request: Request) -> Response:
     if not mcp_authorized(request):
         return Response(status_code=401, headers=mcp_response_headers())
 
-    def _events() -> Generator[str, None, None]:
-        yield ": mcp stream established\n\n"
+    async def _events():
+        # Legacy MCP-over-SSE clients expect an endpoint event that points
+        # to the JSON-RPC POST URL.
+        yield f"event: endpoint\ndata: {request.url}\n\n"
+        while True:
+            if await request.is_disconnected():
+                break
+            yield ": mcp stream established\n\n"
+            await asyncio.sleep(15)
 
     return StreamingResponse(
         _events(),
