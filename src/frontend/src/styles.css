@@ -1841,6 +1841,21 @@ textarea::placeholder {
   background: rgba(15, 107, 95, 0.05);
 }
 
+.path-list {
+  display: grid;
+  gap: 8px;
+}
+
+.path-list code {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(29, 26, 23, 0.04);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* History Sidebar - New Classes */
 .history-sidebar {
   position: fixed;

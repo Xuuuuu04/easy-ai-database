@@ -12,6 +12,7 @@ type SettingsPayload = {
   mcp_commands: {
     claude_code: string
     codex: string
+    cursor?: string
   }
 }
 
@@ -74,6 +75,45 @@ export const SettingsPanel: React.FC = () => {
   const sortedEntries = useMemo(() => {
     return Object.entries(variables).sort(([a], [b]) => a.localeCompare(b))
   }, [variables])
+
+  const mcpHttpJsonTemplate = useMemo(() => {
+    const endpoint = settingsPayload?.mcp_endpoint || ''
+    if (!endpoint) {
+      return ''
+    }
+    const withAuth = Boolean((variables.MCP_AUTH_TOKEN || '').trim())
+    const payload: Record<string, unknown> = {
+      mcpServers: {
+        'easy-ai-database': {
+          transport: 'http',
+          url: endpoint,
+        },
+      },
+    }
+    if (withAuth) {
+      const server = (payload.mcpServers as Record<string, Record<string, unknown>>)['easy-ai-database']
+      server.headers = { Authorization: 'Bearer <MCP_AUTH_TOKEN>' }
+    }
+    return JSON.stringify(payload, null, 2)
+  }, [settingsPayload?.mcp_endpoint, variables.MCP_AUTH_TOKEN])
+
+  const mcpStdioJsonTemplate = useMemo(() => {
+    const payload = {
+      mcpServers: {
+        'easy-ai-database': {
+          command: 'python',
+          args: ['./scripts/mcp_stdio.py'],
+          env: {
+            DATA_DIR: './data',
+            DB_PATH: './data/app.db',
+            INDEX_DIR: './data/index',
+            MCP_PROTOCOL_VERSION: '2025-11-25',
+          },
+        },
+      },
+    }
+    return JSON.stringify(payload, null, 2)
+  }, [])
 
   useEffect(() => {
     void refreshOverview()
@@ -257,7 +297,7 @@ export const SettingsPanel: React.FC = () => {
 
         <section className="setting-card full-width-card">
           <h3>MCP 安装命令</h3>
-          <p className="hint">基于 DEPLOYMENT_URL 自动生成，可直接用于 Claude Code 与 CodeX。</p>
+          <p className="hint">基于 DEPLOYMENT_URL 自动生成，提供 Claude Code、CodeX 以及 Cursor 手动接入快捷方式。</p>
           <div className="command-block">
             <span className="about-label">Claude Code</span>
             <code>{settingsPayload?.mcp_commands.claude_code || '请先设置 DEPLOYMENT_URL 并保存。'}</code>
@@ -281,6 +321,45 @@ export const SettingsPanel: React.FC = () => {
             >
               复制
             </button>
+          </div>
+          <div className="command-block">
+            <span className="about-label">Cursor（手动 JSON）</span>
+            <code>{mcpHttpJsonTemplate || '请先设置 DEPLOYMENT_URL 并保存。'}</code>
+            <button
+              type="button"
+              className="refresh-btn"
+              onClick={() => void copyCommand(mcpHttpJsonTemplate)}
+              disabled={!mcpHttpJsonTemplate}
+            >
+              复制 JSON
+            </button>
+          </div>
+          <div className="command-block">
+            <span className="about-label">通用 HTTP JSON（手动配置）</span>
+            <code>{mcpHttpJsonTemplate || '请先设置 DEPLOYMENT_URL 并保存。'}</code>
+            <button
+              type="button"
+              className="refresh-btn"
+              onClick={() => void copyCommand(mcpHttpJsonTemplate)}
+              disabled={!mcpHttpJsonTemplate}
+            >
+              复制 JSON
+            </button>
+          </div>
+          <div className="command-block">
+            <span className="about-label">本地 stdio JSON（手动配置）</span>
+            <code>{mcpStdioJsonTemplate}</code>
+            <button type="button" className="refresh-btn" onClick={() => void copyCommand(mcpStdioJsonTemplate)}>
+              复制 JSON
+            </button>
+          </div>
+          <div className="command-block">
+            <span className="about-label">Cursor 配置文件路径</span>
+            <div className="path-list">
+              <code>macOS: ~/Library/Application Support/Cursor/User/settings.json</code>
+              <code>Windows: %APPDATA%\\Cursor\\User\\settings.json</code>
+              <code>Linux: ~/.config/Cursor/User/settings.json</code>
+            </div>
           </div>
           {settingsPayload?.mcp_endpoint && (
             <p className="hint">
